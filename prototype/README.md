@@ -10,6 +10,8 @@ python3 -m prototype
 
 (Run from the repository root. Python 3.8+.)
 
+**Browser version:** open `prototype/web/index.html` — the same game as a single self-contained HTML file, click-to-choose, no server or dependencies. Easiest way to hand it to playtesters; the page tint also shifts subtly with the perception tier (the visual mechanic in miniature). The Python version remains the reference implementation; if the two diverge, the Python one wins.
+
 ## What it is testing
 
 The project's core bet: **can modulating what a player perceives — rather than what they can do — carry emotional weight?** Everything in the game is filtered through a single hidden value (`guard`, the thickness of one Shadow layer: the character's trust, frozen at fourteen). It rises and falls with how you spend your days. It is never shown.
