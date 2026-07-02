@@ -78,11 +78,21 @@ const S = {
   guard: 0.78,
   x: 1500, vx: 0, face: 1,
   mode: "walk",           // walk | surf | sit | end
-  t: 0,
+  t: 0, camX: 0,
   phoneDone: false, carvingDone: false,
   benchUsed: 0, talked: {},
   surf: null,
   caps: [], capUntil: 0,
+  birds: [],                                   // living gull objects
+  tui: { state: "tree", ft: 0 },               // tree | fly | away
+  npcs: [], npcReact: {},                      // screen positions + wave timers
+  spirals: [
+    { x: 560,  dy: 44,  r: 14, found: false }, // in the sand near the surf
+    { x: 1210, dy: 6,   r: 8,  found: false }, // scratched on the bench
+    { x: 2965, dy: -46, r: 12, found: false }, // on a trunk at the hill's foot
+  ],
+  child: { on: false, x: 0, life: 0, nextAt: 18, seen: 0 },
+  petals: [], ripples: [],
 };
 const open = () => 1 - S.guard;
 const soften = a => { S.guard = Math.max(0.06, S.guard - a); };
@@ -151,6 +161,36 @@ function chirp() {
   g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime+0.25);
   o.connect(g).connect(gBirds); o.start(); o.stop(AC.currentTime+0.3);
 }
+// one-shot sound effects (all synthesized, all quiet)
+function tone(freq, dur, gain = 0.07, type = "sine", sweepTo = null) {
+  if (!AC) return;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, AC.currentTime);
+  if (sweepTo) o.frequency.exponentialRampToValueAtTime(sweepTo, AC.currentTime + dur);
+  g.gain.setValueAtTime(0.0001, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(gain, AC.currentTime + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
+  o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime + dur + 0.05);
+}
+function noiseBurst(dur, filterType, freq, gain = 0.06) {
+  if (!AC) return;
+  const len = AC.sampleRate * dur, buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random()*2-1) * (1 - i/len);
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const f = AC.createBiquadFilter(); f.type = filterType; f.frequency.value = freq;
+  const g = AC.createGain(); g.gain.value = gain;
+  src.connect(f).connect(g).connect(AC.destination); src.start();
+}
+const sGull    = () => tone(1150, 0.35, 0.05, "sawtooth", 480);
+const sTui     = () => { tone(980, 0.12, 0.08); setTimeout(() => noiseBurst(0.04, "highpass", 4000, 0.05), 130); setTimeout(() => tone(1320, 0.1, 0.07), 200); };
+const sClink   = () => { noiseBurst(0.05, "highpass", 3200, 0.07); tone(2300, 0.3, 0.05); };
+const sBell    = (f = 660) => tone(f, 0.8, 0.06);
+const sSplash  = () => noiseBurst(0.28, "lowpass", 850, 0.07);
+const sRustle  = () => noiseBurst(0.22, "bandpass", 1700, 0.05);
+const sWhistle = () => tone(700, 0.25, 0.05, "sine", 990);
+const sThump   = () => tone(85, 0.35, 0.1);
+
 let chirpAt = 0;
 function audioTick(dt) {
   if (!AC) return;
@@ -173,6 +213,67 @@ for (const [id, k] of [["tL","arrowleft"],["tR","arrowright"],["tE","e"]]) {
   el.addEventListener("touchend",   e => { e.preventDefault(); keys[k] = false; }, {passive:false});
 }
 
+// ── pointer: touch the world, the world answers ──────────────────────
+cv.addEventListener("pointerdown", e => {
+  if (S.mode === "end") return;
+  const sx = e.clientX, sy = e.clientY;               // screen coords
+  const wx = sx + S.camX;                             // world x
+  const horizon = H*0.42, ground = H*0.78;
+  // the child: gone the moment you reach for it
+  if (S.child.on && Math.abs(sx - (S.child.x - S.camX)) < 60 && sy > ground-90 && sy < ground+40) {
+    S.child.on = false; S.child.nextAt = S.t + 22 + Math.random()*18; sThump(); return;
+  }
+  // the tūī, if it's on the tree
+  const tx = TREE_X - S.camX;
+  if (S.tui.state === "tree" && open() > 0.35 &&
+      Math.abs(sx - (tx+14)) < 36 && Math.abs(sy - (ground-66)) < 44) {
+    S.tui.state = "fly"; S.tui.ft = 0; sTui(); return;
+  }
+  // gulls scatter
+  for (const b of S.birds) {
+    if (Math.abs(sx - b.sx) < 30 && Math.abs(sy - b.sy) < 26) {
+      b.scare = 1.6; b.vy = -70 - Math.random()*50; b.vx *= 2.2; sGull(); return;
+    }
+  }
+  // people: reaching out only lands when you're open
+  for (let i = 0; i < S.npcs.length; i++) {
+    const n = S.npcs[i];
+    if (Math.abs(sx - n.x) < 26 && Math.abs(sy - n.y + 25) < 45) {
+      if (open() > 0.35) { S.npcReact[n.id] = S.t; sWhistle(); }
+      return; // when armored: nothing. silence is the answer.
+    }
+  }
+  // Mara's bin — the whole thread in one sound
+  if (Math.abs(wx - (PL.mara.x + 78)) < 26 && sy > ground-40 && sy < ground+38) {
+    sClink(); S.binWob = S.t; S.binClinks = (S.binClinks||0) + 1;
+    if (S.binClinks === 2 && open() > 0.35) cap("Heavier than one person's fortnight.", 3.5);
+    return;
+  }
+  // the spirals
+  for (const sp of S.spirals) {
+    if (!sp.found && Math.abs(wx - sp.x) < 26 && Math.abs(sy - (ground + sp.dy)) < 26 && open() > 0.3) {
+      sp.found = true; sBell(660 + S.spirals.filter(z=>z.found).length * 110);
+      const n = S.spirals.filter(z => z.found).length;
+      if (n === 2) cap("…again?", 2.5);
+      if (n === 3) { setTimeout(() => { sBell(660); sBell(880); setTimeout(()=>sBell(1100),300); }, 400); }
+      return;
+    }
+  }
+  // the flame tree sheds
+  if (Math.abs(wx - TREE_X) < 60 && sy > ground-150 && sy < ground-40) {
+    sRustle();
+    for (let i = 0; i < 9; i++)
+      S.petals.push({ x: TREE_X + (Math.random()*70-35), y: ground-110+Math.random()*30,
+                      vx: Math.random()*24-12, vy: 12+Math.random()*22, life: 2.5+Math.random() });
+    return;
+  }
+  // the sea
+  if (sy > horizon && sy < ground) {
+    sSplash(); S.ripples.push({ x: wx, y: sy, r: 4, life: 1 });
+    return;
+  }
+});
+
 // ── places ───────────────────────────────────────────────────────────
 const PL = {
   surfZone:  { x: 430,  w: 260, label: "paddle out" },
@@ -183,24 +284,26 @@ const PL = {
   reserve:   { x: 3060, w: 140, label: "the track" }, // only visible when open
 };
 function near(p) { return Math.abs(S.x - p.x) < p.w; }
+const TREE_X = PL.dairy.x - 260;
+const trackOpen = () => open() > 0.6 || S.spirals.every(sp => sp.found);
 
 // ── dialogue (three registers, chosen by open()) ─────────────────────
 function reg() { return open() < 0.35 ? 0 : open() < 0.65 ? 1 : 2; }
 const LINES = {
   dairy: [
-    "Mrs Hema counts your change without looking up. \"Cold out,\" she says, to the till.",
-    "\"Pies are back Thursday,\" Mrs Hema says, and almost smiles. The tūī outside starts up mid-sentence.",
-    "Mrs Hema is singing to the pie warmer when you come in, and doesn't fully stop. \"You've got some colour back,\" she says. \"Suits you.\"",
+    "Mrs Hema counts your change. \"Cold out.\"",
+    "\"Pies are back Thursday.\" Almost a smile.",
+    "She's singing to the pie warmer. \"You've got some colour back.\"",
   ],
   pub: [
-    "Rewi nods. You nod. The replay flickers above the bar. That's the whole conversation.",
-    "\"Swell's building for the weekend,\" Rewi says, pouring. \"You should get out there while it's clean.\"",
-    "Rewi leans on the bar. \"You know,\" he says, \"my old man used to say this town tells you everything, if you're the right speed to hear it.\" He taps the tap twice, like punctuation.",
+    "Rewi nods. You nod. The replay flickers.",
+    "\"Swell's building. Get out while it's clean.\"",
+    "\"This town tells you everything — if you're the right speed to hear it.\"",
   ],
   mara: [
-    "Mara answers on the fourth knock. \"Mate.\" The door opens body-width. Rugby, roof, weather. The door closes warmly enough.",
-    "Mara makes tea strong enough to stand a spoon in. Twice she starts a sentence and lets it go, like a wave she's decided not to catch.",
-    "Mara's kitchen is very, very clean. On the way out you carry the recycling down for her, old habit, and the bin swings heavier than one person's fortnight should. You hold the lid a second longer than you need to.",
+    "The door opens body-width. Rugby. Roof. Weather.",
+    "Twice she starts a sentence and lets it go.",
+    "Her kitchen is very, very clean. The bin outside is not light.",
   ],
 };
 
@@ -211,9 +314,9 @@ function tryAct() {
   if (near(PL.surfZone)) { startSurf(); return; }
   if (near(PL.bench)) {
     S.mode = "sit"; S.sitT = 3.2;
-    cap(["You sit. The sea does what the sea does.",
-         "The bench holds sixty years of initials. Yours are here somewhere.",
-         "Seventeen, terrified, kissed first — right here. You let the memory sit down next to you."][reg()], 4.5);
+    cap(["The sea does what the sea does.",
+         "Sixty years of initials. Yours are here somewhere.",
+         "Seventeen, terrified, kissed first — right here."][reg()], 4);
     return;
   }
   for (const key of ["dairy","pub","mara"]) {
@@ -224,31 +327,31 @@ function tryAct() {
       return;
     }
   }
-  if (near(PL.reserve) && open() > 0.6 && !S.carvingDone) {
+  if (near(PL.reserve) && trackOpen() && !S.carvingDone) {
     S.carvingDone = true;
-    cap("The track climbs past the water tank to the big tōtara.", 3.5);
-    cap("Chest height, grey with age, cut deep by children's hands: a spiral, and two stick figures holding hands.", 5.5);
-    cap("Underneath, in letters that took a whole afternoon: \"WE PROMISED.\"", 5);
-    cap("You have walked past the bottom of this track a thousand times.", 5);
+    cap("The track climbs to the big tōtara.", 3);
+    cap("A spiral. Two stick figures, holding hands.", 4.5);
+    cap("“WE PROMISED.”", 4.5);
+    cap("You've walked past this track a thousand times.", 5);
     soften(0.05);
-    setTimeout(endCard, 22000);
+    setTimeout(endCard, 19000);
   }
 }
 function endCard() {
   if (S.mode === "end") return;
   S.mode = "end";
-  cap("This was ninety seconds of Phase 1. The real game is ten years here — and the town remembers all of them.", 8);
-  cap("(Refresh to walk it again, more armored or less.)", 8);
+  cap("Ninety seconds of Phase 1. The real game is ten years — and the town remembers.", 8);
+  cap("(Refresh to live it differently.)", 8);
 }
 
 // ── surf toy ─────────────────────────────────────────────────────────
 function startSurf() {
   S.mode = "surf";
   S.surf = { phase: "wait", waveX: -600, py: 0, bal: 0, rideT: 0, rides: 0, eReleased: false };
-  cap(["The water is a chore you happen to love.",
+  cap(["A chore you happen to love.",
        "The water takes your weight like it remembers you.",
-       "The water is lit from inside today."][reg()], 3.5);
-  cap("A wave will come. Press E (or act) as it lifts you. Lean ← → to stay on.", 4);
+       "The water is lit from inside."][reg()], 3);
+  cap("E as the wave lifts you. Lean ← → to stay on.", 3.5);
 }
 function surfTick(dt) {
   const s = S.surf;
@@ -259,7 +362,7 @@ function surfTick(dt) {
       if (keys.e || keys.space) { s.phase = "ride"; s.rideT = 0; s.bal = 0; keys.e = false; }
     } else if (s.waveX >= 60) {
       s.phase = "missed"; s.mt = 1.2;
-      cap(["Missed it. The sea doesn't care.", "Missed it — the next one's already gathering.", "Missed it, laughing."][reg()], 2);
+      cap(["Missed. The sea doesn't care.", "Missed. The next one's gathering.", "Missed it, laughing."][reg()], 2);
     }
   } else if (s.phase === "missed") {
     s.mt -= dt; if (s.mt <= 0) { s.waveX = -600 - Math.random()*200; s.phase = "wait"; }
@@ -273,9 +376,9 @@ function surfTick(dt) {
       s.rides++;
       soften(Math.min(0.028 * good, 0.09));
       cap(good > 4.5
-        ? ["Long ride. Something in you unclenches a finger.", "Long ride. Your shoulders come down an inch.", "Long ride — fourteen again, in the only way that was ever good."][reg()]
-        : "Short one. The next wave is already gathering.", 3);
-      if (s.rides >= 3) { S.mode = "walk"; S.surf = null; cap("Enough. You wade in with salt in your eyebrows.", 3); return; }
+        ? ["Something unclenches a finger.", "Your shoulders come down an inch.", "Fourteen again — the only good way."][reg()]
+        : "Short one.", 2.5);
+      if (s.rides >= 3) { S.mode = "walk"; S.surf = null; cap("Salt in your eyebrows.", 2.5); return; }
       s.phase = "wait"; s.waveX = -650 - Math.random()*250;
     }
   }
@@ -290,12 +393,12 @@ function maybePhone() {
   if (S.phoneDone || S.t < 75 || S.mode !== "walk") return;
   S.phoneDone = true;
   const felt = wound(0.16);
-  cap("Your phone. Mum. Dad's had a turn — they're keeping him in overnight for tests.", 5.5);
+  cap("Your phone. Mum. Dad's had a turn — overnight, for tests.", 5);
   cap(felt < 0.08
-      ? "The news lands somewhere offshore of you, like weather over the horizon. You keep walking."
+      ? "It lands offshore, like weather."
       : felt < 0.12
-      ? "Your chest does something complicated. The street looks suddenly further away."
-      : "It goes through you like cold water. The whole bay dims — you can feel exactly how much he matters.", 6);
+      ? "Your chest does something complicated."
+      : "Cold water, all the way through.", 5);
 }
 
 // ── drawing ──────────────────────────────────────────────────────────
@@ -303,6 +406,7 @@ function draw(t) {
   const o = open();
   const horizon = H*0.42, ground = H*0.78;
   const camX = Math.max(0, Math.min(S.x - W/2, WORLD_W - W));
+  S.camX = camX;
   // sky
   const sky = ctx.createLinearGradient(0,0,0,horizon*1.2);
   sky.addColorStop(0, col(...P.skyTop)); sky.addColorStop(1, col(...P.skyBot));
@@ -345,8 +449,9 @@ function draw(t) {
     ctx.beginPath();
     ctx.ellipse(hx0+140+i*72, ground-30-((i*37)%110), 46, 30, 0, 0, 7); ctx.fill();
   }
-  if (o > 0.6) { // the track & sign — literally not rendered when guarded
-    ctx.strokeStyle = col(...P.sand); ctx.lineWidth = 7; ctx.globalAlpha = Math.min(1,(o-0.6)*4);
+  if (trackOpen()) { // the track & sign — literally not rendered when guarded
+    ctx.strokeStyle = col(...P.sand); ctx.lineWidth = 7;
+    ctx.globalAlpha = o > 0.6 ? Math.min(1,(o-0.6)*4) : 0.9;
     ctx.beginPath(); ctx.moveTo(PL.reserve.x-camX, ground+30);
     ctx.quadraticCurveTo(PL.reserve.x-camX+50, ground-90, PL.reserve.x-camX+130, ground-160);
     ctx.stroke();
@@ -366,17 +471,53 @@ function draw(t) {
   ctx.fillStyle = col(...P.trunk);
   ctx.fillRect(bx-26, ground-2, 52, 5); ctx.fillRect(bx-26, ground-16, 52, 5);
   ctx.fillRect(bx-22, ground-16, 4, 20); ctx.fillRect(bx+18, ground-16, 4, 20);
-  // NPCs: count & liveliness scale with open
+  // Mara's bin (clickable — the whole thread in one prop)
+  const binX = PL.mara.x + 78 - camX;
+  ctx.save(); ctx.translate(binX, ground+24);
+  const wob = Math.max(0, 0.5-(t-(S.binWob||-10)));
+  ctx.rotate(wob * Math.sin((t-(S.binWob||0))*28) * 0.25);
+  ctx.fillStyle = col("#6e6e6a","#8a9296");
+  ctx.fillRect(-9, -26, 18, 26); ctx.fillRect(-11, -30, 22, 5);
+  ctx.restore();
+  // spirals — always there; whether you can see them is another matter
+  for (const sp of S.spirals) {
+    const a = sp.found ? 0.9 : (o > 0.3 ? 0.12 + 0.3*o : 0);
+    if (a > 0) drawSpiral(sp.x-camX, ground+sp.dy, sp.r, a, sp.found);
+  }
+  // NPCs: collected for hit-testing; count & liveliness scale with open
+  S.npcs = [];
   npc(PL.dairy.x+90-camX, ground+26, P.np, o, t, 0);
   if (o > 0.3) npc(PL.pub.x-70-camX + Math.sin(t*0.35)*40*o, ground+26, P.np2, o, t, 1);
   if (o > 0.55) npc(900-camX + ((t*30)%700), ground+26, P.np, o, t, 2);   // kid with board
   if (o > 0.55) npc(980-camX + ((t*30)%700), ground+26, P.np2, o, t, 3);
-  // birds
-  const nb = Math.floor(o*9);
-  for (let i=0;i<nb;i++) {
-    const bxp = ((i*467 + t*(26+i*7)) % (W+160)) - 80;
-    const byp = 40 + (i*53)%Math.max(1,(horizon-90)) + Math.sin(t*2+i)*6;
-    bird(bxp, byp);
+  // gulls: living objects — they can be startled
+  for (const b of S.birds) { b.sx = b.x; b.sy = b.y; bird(b.x, b.y); }
+  // the tūī in flight
+  if (S.tui.state === "fly") {
+    const ft = S.tui.ft, fx = TREE_X-camX+14 + ft*150, fy = (ground-96) - 70*Math.sin(Math.min(ft/2, 1)*Math.PI*0.6) - ft*26;
+    ctx.fillStyle = "#1a2320";
+    ctx.beginPath(); ctx.ellipse(fx, fy, 7, 4.5, Math.sin(ft*14)*0.25, 0, 7); ctx.fill();
+  }
+  // falling flame-tree petals
+  ctx.fillStyle = col(...P.flame);
+  for (const pt of S.petals) {
+    ctx.globalAlpha = Math.min(1, pt.life);
+    ctx.fillRect(pt.x-camX, pt.y, 4, 3);
+  }
+  ctx.globalAlpha = 1;
+  // sea ripples
+  for (const rp of S.ripples) {
+    ctx.strokeStyle = col(...P.foam); ctx.globalAlpha = rp.life*0.6; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.ellipse(rp.x-camX, rp.y, rp.r, rp.r*0.35, 0, 0, 7); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // the child — at the edge of things, when you're open enough
+  if (S.child.on) {
+    const cxp = S.child.x - camX, a = Math.min(1, S.child.life) * 0.75;
+    ctx.globalAlpha = a; ctx.fillStyle = "#242830";
+    ctx.fillRect(cxp-4, ground-2, 8, 18);
+    ctx.beginPath(); ctx.arc(cxp, ground-8, 5, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
   }
   // player
   if (S.mode === "surf") drawSurf(t, horizon, ground, camX);
@@ -414,7 +555,7 @@ function tree(x, y, t, o) {
     ctx.beginPath();
     ctx.ellipse(x + Math.sin(i*2.2)*30, y-85-((i*23)%40), 34, 22, 0, 0, 7); ctx.fill();
   }
-  if (o > 0.35) { // the tūī, hopping when the world is open
+  if (o > 0.35 && S.tui.state === "tree") { // the tūī, hopping when the world is open
     const hop = Math.abs(Math.sin(t*3))* (o>0.6?8:3);
     ctx.fillStyle = "#1a2320";
     ctx.beginPath(); ctx.ellipse(x+14, y-96-hop, 7, 5, 0, 0, 7); ctx.fill();
@@ -422,8 +563,20 @@ function tree(x, y, t, o) {
     ctx.beginPath(); ctx.arc(x+11, y-97-hop, 2, 0, 7); ctx.fill(); // the white tuft
   }
 }
+function drawSpiral(x, y, r, alpha, found) {
+  ctx.strokeStyle = found ? `rgba(196,150,40,${alpha})` : `rgba(60,52,36,${alpha})`;
+  ctx.lineWidth = found ? 2 : 1.4;
+  ctx.beginPath();
+  for (let a = 0; a < Math.PI*5; a += 0.25) {
+    const rr = r * a / (Math.PI*5);
+    const px = x + Math.cos(a)*rr, py = y + Math.sin(a)*rr;
+    a === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+}
 function npc(x, y, pal, o, t, i) {
   if (x < -40 || x > W+40) return;
+  S.npcs.push({ id: i, x, y });
   const walkA = o > 0.3 ? Math.sin(t*4+i*2)*4*o : 0;
   ctx.fillStyle = col(...pal);
   ctx.fillRect(x-6, y-40, 12, 26);                     // body
@@ -431,6 +584,12 @@ function npc(x, y, pal, o, t, i) {
   ctx.strokeStyle = col(...pal); ctx.lineWidth = 4;
   ctx.beginPath(); ctx.moveTo(x-3, y-15); ctx.lineTo(x-3-walkA, y);
   ctx.moveTo(x+3, y-15); ctx.lineTo(x+3+walkA, y); ctx.stroke();
+  const react = t - (S.npcReact[i] ?? -10);
+  if (react < 1.6) { // a raised hand — you reached out, and it landed
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x+5, y-32);
+    ctx.lineTo(x+13, y-44 - Math.sin(react*9)*3); ctx.stroke();
+  }
   if (i>=2) { ctx.fillStyle = col("#7a776e","#f2f2ea"); ctx.fillRect(x+8, y-38, 5, 30); } // surfboard
 }
 function drawPlayer(x, y, t) {
@@ -481,7 +640,7 @@ function promptTick(camX, ground) {
   if (S.mode === "walk") {
     for (const key in PL) {
       const p = PL[key];
-      if (key === "reserve" && (open() <= 0.6 || S.carvingDone)) continue;
+      if (key === "reserve" && (!trackOpen() || S.carvingDone)) continue;
       if (near(p)) { h = `[E] ${p.label}`; break; }
     }
   } else if (S.mode === "surf") {
@@ -510,10 +669,53 @@ function frame(ms) {
     if (!keys.e) eLatch = false;
   }
   maybePhone();
+  tickWorld(dt);
   audioTick(dt);
   capTick(dt);
   draw(S.t);
   requestAnimationFrame(frame);
+}
+
+function tickWorld(dt) {
+  const horizon = H*0.42;
+  // gull population tracks openness
+  const want = Math.floor(open()*9);
+  while (S.birds.length < want)
+    S.birds.push({ x: Math.random()*W, y: 40+Math.random()*(horizon-100),
+                   vx: (14+Math.random()*22)*(Math.random()<0.5?-1:1),
+                   vy: 0, ph: Math.random()*7, scare: 0, baseY: 0, sx:0, sy:0 });
+  if (S.birds.length > want) S.birds.length = want;
+  for (const b of S.birds) {
+    b.x += b.vx*dt * (b.scare > 0 ? 2.2 : 1);
+    if (b.scare > 0) { b.scare -= dt; b.y += b.vy*dt; b.vy *= 0.97; }
+    else b.y += Math.sin(S.t*2 + b.ph)*6*dt;
+    if (b.y < 24) b.y = 24;
+    if (b.x < -90) b.x = W+80; if (b.x > W+90) b.x = -80;
+  }
+  // tūī flight cycle
+  if (S.tui.state === "fly") {
+    S.tui.ft += dt;
+    if (S.tui.ft > 2.4) { S.tui.state = "away"; S.tui.at = 9 + Math.random()*9; }
+  } else if (S.tui.state === "away") {
+    S.tui.at -= dt;
+    if (S.tui.at <= 0) { S.tui.state = "tree"; if (open() > 0.35) sTui(); }
+  }
+  // the child at the edge of things
+  const ch = S.child;
+  if (!ch.on && open() > 0.65 && S.mode === "walk" && S.t > ch.nextAt) {
+    ch.on = true; ch.life = 4.5; ch.seen++;
+    ch.x = (S.x - S.camX > W/2) ? S.camX + 50 : S.camX + W - 50;
+  }
+  if (ch.on) {
+    ch.life -= dt;
+    if (Math.abs(S.x - ch.x) < 130) { ch.on = false; ch.nextAt = S.t + 26 + Math.random()*16; sThump(); }
+    else if (ch.life <= 0) { ch.on = false; ch.nextAt = S.t + 24 + Math.random()*20; }
+  }
+  // particles
+  for (const p of S.petals) { p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 8*dt; p.life -= dt; }
+  S.petals = S.petals.filter(p => p.life > 0);
+  for (const r of S.ripples) { r.r += 26*dt; r.life -= dt; }
+  S.ripples = S.ripples.filter(r => r.life > 0);
 }
 
 // ── start ────────────────────────────────────────────────────────────
@@ -521,8 +723,8 @@ document.getElementById("start").addEventListener("click", () => {
   document.getElementById("start").style.display = "none";
   if (isTouch) for (const id of ["tL","tR","tE"]) document.getElementById(id).style.display = "flex";
   try { audioInit(); } catch (e) {}
-  cap("Kōtuku Bay. An ordinary morning.", 3.5);
-  cap("Do what feels good. Watch what the world does.", 4);
+  cap("An ordinary morning.", 3);
+  cap("Everything can be touched.", 3.5);
   requestAnimationFrame(ms => { last = ms/1000; requestAnimationFrame(frame); });
 });
 
