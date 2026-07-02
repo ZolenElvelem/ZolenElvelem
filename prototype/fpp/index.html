@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>FPP feel spike — guard-driven perception</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
+  #canvas { display: block; width: 100%; height: 100%; }
+  #start {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: #14140f; color: #e8e0c9; font: 19px Georgia, serif;
+    text-align: center; padding: 2em; cursor: pointer; z-index: 100;
+  }
+  #start small { opacity: 0.6; font-size: 14px; max-width: 32em; line-height: 1.6; }
+  #start .go { border: 1px solid #8a7c5f; padding: 0.6em 2.2em; border-radius: 4px; }
+  #hint {
+    position: fixed; top: 1.2em; left: 50%; transform: translateX(-50%);
+    font: 13px Georgia, serif; color: rgba(245, 239, 223, 0.7);
+    letter-spacing: 0.05em; pointer-events: none; text-align: center;
+  }
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    background: radial-gradient(circle at center, rgba(0,0,0,0), rgba(10,10,12,0.7));
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="hint">WASD move · mouse look · C child height</div>
+<div id="vignette"></div>
+<div id="start">
+  <div>FPP Feel Spike</div>
+  <small>A walkable street where perception shapes the world. Click to begin.</small>
+  <div class="go">begin</div>
+</div>
+
+<script type="module">
+import * as THREE from './three.min.js';
+
+"use strict";
+
+// ═══════════════════════════════════════════════════════════════════
+// F0 first-person feel spike: guard drives perception
+// ═══════════════════════════════════════════════════════════════════
+
+const canvas = document.getElementById('canvas');
+const vignetteEl = document.getElementById('vignette');
+const startEl = document.getElementById('start');
+const hintEl = document.getElementById('hint');
+
+// Scene setup
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+
+// Palette: muted/vivid pairs (from bay.html)
+const palette = {
+  skyTop:    { muted: 0x5a5e60, vivid: 0x7fc4e8 },
+  skyBot:    { muted: 0x8b8d8a, vivid: 0xffe9c4 },
+  seaFar:    { muted: 0x57605f, vivid: 0x1f7f9c },
+  seaNear:   { muted: 0x4a5251, vivid: 0x2ea3b5 },
+  sand:      { muted: 0x8f8a7c, vivid: 0xe8d5a2 },
+  road:      { muted: 0x6b6b66, vivid: 0x9a938a },
+  hill:      { muted: 0x5d635c, vivid: 0x4d8f4f },
+  bush:      { muted: 0x565c55, vivid: 0x2f7a3c },
+  trunk:     { muted: 0x6a655c, vivid: 0x7a5c3a },
+  bld1:      { muted: 0x75726b, vivid: 0xd8b46a }, // dairy tan
+  bld2:      { muted: 0x6d6f6e, vivid: 0xb0cf9a }, // pub green
+  bld3:      { muted: 0x7a746e, vivid: 0xe0937c }, // cottage coral
+  roof:      { muted: 0x5c5a55, vivid: 0x8a4b3a },
+  flame:     { muted: 0x6a6258, vivid: 0xd4452a }, // tree red
+  grey:      { muted: 0x5d5d5a, vivid: 0x888880 },
+};
+
+// Game state
+const state = {
+  guard: 0.75,
+  childHeight: false,
+  started: false,
+  audioCtx: null,
+  gOcean: null,
+};
+
+// Compute open from guard
+const open = () => 1 - state.guard;
+
+// Lerp function for colors
+function lerpColor(muteHex, vividHex, k) {
+  const muted = new THREE.Color(muteHex);
+  const vivid = new THREE.Color(vividHex);
+  return new THREE.Color().copy(muted).lerp(vivid, k);
+}
+
+// Build the scene
+function buildScene() {
+  // Lighting: one ambient, one directional
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambientLight);
+
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  dirLight.position.set(10, 15, 10);
+  scene.add(dirLight);
+
+  // Ground plane (sand)
+  const groundGeom = new THREE.PlaneGeometry(100, 60);
+  const groundMat = new THREE.MeshBasicMaterial({ color: palette.sand.vivid });
+  const ground = new THREE.Mesh(groundGeom, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.userData.colors = { mat: groundMat, muted: palette.sand.muted, vivid: palette.sand.vivid };
+  scene.add(ground);
+
+  // Road strip (runs down the middle)
+  const roadGeom = new THREE.PlaneGeometry(8, 50);
+  const roadMat = new THREE.MeshBasicMaterial({ color: palette.road.vivid });
+  const road = new THREE.Mesh(roadGeom, roadMat);
+  road.position.set(0, 0.02, 0);
+  road.rotation.x = -Math.PI / 2;
+  road.userData.colors = { mat: roadMat, muted: palette.road.muted, vivid: palette.road.vivid };
+  scene.add(road);
+
+  // Sea plane (to one side)
+  const seaGeom = new THREE.PlaneGeometry(100, 60);
+  const seaMat = new THREE.MeshBasicMaterial({ color: palette.seaNear.vivid });
+  const sea = new THREE.Mesh(seaGeom, seaMat);
+  sea.position.set(-60, 0.01, 0);
+  sea.rotation.x = -Math.PI / 2;
+  sea.userData.colors = { mat: seaMat, muted: palette.seaNear.muted, vivid: palette.seaNear.vivid };
+  scene.add(sea);
+
+  // Buildings (4 simple boxes with pitched roofs)
+  const buildingConfigs = [
+    { x: -20, z: 10, w: 8, h: 6, roofH: 3, pal: palette.bld1, name: 'dairy' },
+    { x: -5, z: 15, w: 10, h: 7, roofH: 3.5, pal: palette.bld2, name: 'pub' },
+    { x: 10, z: 12, w: 7, h: 5, roofH: 2.5, pal: palette.bld3, name: 'cottage' },
+    { x: 25, z: 18, w: 9, h: 6, roofH: 3, pal: palette.grey, name: 'grey' },
+  ];
+
+  buildingConfigs.forEach(cfg => {
+    // Building body
+    const bodyGeom = new THREE.BoxGeometry(cfg.w, cfg.h, cfg.w);
+    const bodyMat = new THREE.MeshBasicMaterial({ color: cfg.pal.vivid });
+    const body = new THREE.Mesh(bodyGeom, bodyMat);
+    body.position.set(cfg.x, cfg.h / 2, cfg.z);
+    body.userData.colors = { mat: bodyMat, muted: cfg.pal.muted, vivid: cfg.pal.vivid };
+    scene.add(body);
+
+    // Pitched roof (two triangular faces forming a cone)
+    const roofGeom = new THREE.ConeGeometry(cfg.w / 2, cfg.roofH, 4);
+    const roofMat = new THREE.MeshBasicMaterial({ color: palette.roof.vivid });
+    const roof = new THREE.Mesh(roofGeom, roofMat);
+    roof.position.set(cfg.x, cfg.h + cfg.roofH / 2, cfg.z);
+    roof.rotation.y = Math.PI / 4;
+    roof.userData.colors = { mat: roofMat, muted: palette.roof.muted, vivid: palette.roof.vivid };
+    scene.add(roof);
+  });
+
+  // Flame tree: brown trunk + red sphere canopy
+  const trunkGeom = new THREE.CylinderGeometry(0.8, 1, 8, 8);
+  const trunkMat = new THREE.MeshBasicMaterial({ color: palette.trunk.vivid });
+  const trunk = new THREE.Mesh(trunkGeom, trunkMat);
+  trunk.position.set(-35, 4, 8);
+  trunk.userData.colors = { mat: trunkMat, muted: palette.trunk.muted, vivid: palette.trunk.vivid };
+  scene.add(trunk);
+
+  // Tree canopy: 3-4 red sphere blobs
+  for (let i = 0; i < 4; i++) {
+    const canopyGeom = new THREE.SphereGeometry(3 + Math.random() * 1.5, 8, 8);
+    const canopyMat = new THREE.MeshBasicMaterial({ color: palette.flame.vivid });
+    const canopy = new THREE.Mesh(canopyGeom, canopyMat);
+    const angle = (i / 4) * Math.PI * 2;
+    canopy.position.set(
+      -35 + Math.cos(angle) * 4,
+      10 + i * 1.5,
+      8 + Math.sin(angle) * 4
+    );
+    canopy.userData.colors = { mat: canopyMat, muted: palette.flame.muted, vivid: palette.flame.vivid };
+    canopy.userData.treeCanopy = true;
+    scene.add(canopy);
+  }
+
+  // Tūī bird: small black sphere in the tree
+  const tuiGeom = new THREE.SphereGeometry(0.4, 8, 8);
+  const tuiMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
+  const tui = new THREE.Mesh(tuiGeom, tuiMat);
+  tui.position.set(-33, 12, 10);
+  tui.userData.isTui = true;
+  tui.userData.hopAmount = 0;
+  tui.userData.gazeTime = 0;
+  scene.add(tui);
+
+  return { ground, road, sea, tui };
+}
+
+const sceneObjs = buildScene();
+
+// Camera setup
+camera.position.set(0, 1.7, -15);
+camera.lookAt(0, 1.7, 0);
+
+// Input handling
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// Pointer lock
+let pointerLocked = false;
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = document.pointerLockElement === canvas;
+});
+
+canvas.addEventListener('click', () => {
+  if (!state.started) return;
+  if (!pointerLocked) canvas.requestPointerLock();
+});
+
+// Mouse movement (when pointer locked)
+document.addEventListener('mousemove', e => {
+  if (!pointerLocked || !state.started) return;
+  const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  euler.setFromQuaternion(camera.quaternion);
+  euler.rotateY(-e.movementX * 0.005);
+  euler.rotateX(-e.movementY * 0.005);
+  euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x));
+  camera.quaternion.setFromEuler(euler);
+});
+
+// Game loop
+let lastTime = performance.now();
+let movementVector = new THREE.Vector3();
+
+function updateScene() {
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.016);
+  lastTime = now;
+
+  if (!state.started) return;
+
+  // Movement (3 m/s)
+  const speed = 3;
+  movementVector.set(0, 0, 0);
+  if (keys['w']) movementVector.z += speed;
+  if (keys['s']) movementVector.z -= speed;
+  if (keys['a']) movementVector.x -= speed;
+  if (keys['d']) movementVector.x += speed;
+
+  // Apply movement in camera's local space
+  movementVector.normalize().multiplyScalar(speed * dt);
+  const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  camera.position.addScaledVector(forward, movementVector.z / speed);
+  camera.position.addScaledVector(right, movementVector.x / speed);
+
+  // Clamp player inside reasonable area
+  camera.position.x = Math.max(-45, Math.min(45, camera.position.x));
+  camera.position.z = Math.max(-25, Math.min(30, camera.position.z));
+  camera.position.y = state.childHeight ? 1.1 : 1.7;
+
+  // Child height toggle (C key)
+  if (keys['c'] && !state.childHeightLatch) {
+    state.childHeightLatch = true;
+    state.childHeight = !state.childHeight;
+  }
+  if (!keys['c']) state.childHeightLatch = false;
+
+  // Gaze interaction: raycast from camera center to check if looking at tūī
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const tui = sceneObjs.tui;
+  const intersects = raycaster.intersectObject(tui);
+  const isGazing = intersects.length > 0 && intersects[0].distance < 50;
+
+  if (isGazing && state.gazeStartTime === undefined) {
+    state.gazeStartTime = now;
+  } else if (!isGazing) {
+    state.gazeStartTime = undefined;
+  }
+
+  // Trigger interaction after 1 second of continuous gaze
+  if (isGazing && state.gazeStartTime !== undefined && (now - state.gazeStartTime) >= 1000) {
+    if (!state.gazeTriggered) {
+      state.gazeTriggered = true;
+      playChirp();
+      tui.userData.hopAmount = 1;
+      state.guard = Math.max(0.06, state.guard - 0.04);
+      state.gazeCooldown = now + 3000; // 3 second cooldown
+      state.gazeStartTime = undefined;
+    }
+  }
+
+  // Reset gaze trigger after cooldown
+  if (state.gazeCooldown && now >= state.gazeCooldown) {
+    state.gazeTriggered = false;
+    state.gazeCooldown = undefined;
+  }
+
+  // Bird hop animation
+  if (tui.userData.hopAmount > 0) {
+    tui.userData.hopAmount -= dt * 2; // decay over 0.5s
+    tui.position.y = 12 + Math.max(0, tui.userData.hopAmount) * 1.5;
+  }
+
+  // Update perception: colors, sky, fog, vignette
+  const k = open();
+  scene.traverse(obj => {
+    if (obj.userData.colors) {
+      const col = lerpColor(obj.userData.colors.muted, obj.userData.colors.vivid, k);
+      obj.userData.colors.mat.color.copy(col);
+    }
+  });
+
+  // Sky background lerp
+  const skyTop = lerpColor(palette.skyTop.muted, palette.skyTop.vivid, k);
+  const skyBot = lerpColor(palette.skyBot.muted, palette.skyBot.vivid, k);
+  scene.background = skyTop; // simplified: just use top color
+
+  // Fog density: thick when armored (guard=1), thin when open (guard=0)
+  scene.fog = new THREE.Fog(skyTop, 10 + 50 * (1 - state.guard), 80);
+
+  // Vignette opacity = 0.15 + guard*0.55
+  const vignetteOpacity = 0.15 + state.guard * 0.55;
+  vignetteEl.style.opacity = vignetteOpacity;
+
+  // Update ambient ocean audio gain
+  if (state.gOcean) {
+    state.gOcean.gain.value = 0.02 + 0.10 * open();
+  }
+
+  renderer.render(scene, camera);
+}
+
+// Audio initialization
+function initAudio() {
+  if (state.audioCtx) return;
+  state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // Ocean: looped filtered noise
+  const len = state.audioCtx.sampleRate * 2;
+  const buf = state.audioCtx.createBuffer(1, len, state.audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < len; i++) {
+    const w = Math.random() * 2 - 1;
+    last = (last + 0.02 * w) / 1.02;
+    d[i] = last * 3.5;
+  }
+  const src = state.audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.loop = true;
+  const lp = state.audioCtx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 400;
+  state.gOcean = state.audioCtx.createGain();
+  state.gOcean.gain.value = 0.05;
+  src.connect(lp).connect(state.gOcean).connect(state.audioCtx.destination);
+  src.start();
+}
+
+// Play two-tone chirp (980Hz 0.12s, then 1320Hz 0.1s)
+function playChirp() {
+  if (!state.audioCtx) return;
+  const ctx = state.audioCtx;
+
+  // First tone: 980Hz for 0.12s
+  const o1 = ctx.createOscillator();
+  const g1 = ctx.createGain();
+  o1.frequency.value = 980;
+  o1.type = 'sine';
+  g1.gain.setValueAtTime(0.07, ctx.currentTime);
+  g1.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+  o1.connect(g1).connect(ctx.destination);
+  o1.start();
+  o1.stop(ctx.currentTime + 0.12);
+
+  // Second tone: 1320Hz for 0.1s, starting after first tone ends
+  setTimeout(() => {
+    const o2 = ctx.createOscillator();
+    const g2 = ctx.createGain();
+    o2.frequency.value = 1320;
+    o2.type = 'sine';
+    g2.gain.setValueAtTime(0.07, ctx.currentTime);
+    g2.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.1);
+    o2.connect(g2).connect(ctx.destination);
+    o2.start();
+    o2.stop(ctx.currentTime + 0.1);
+  }, 120);
+}
+
+// Start button
+startEl.addEventListener('click', () => {
+  state.started = true;
+  startEl.style.display = 'none';
+  initAudio();
+  canvas.requestPointerLock();
+  lastTime = performance.now();
+});
+
+// Animation loop
+function animate() {
+  updateScene();
+  requestAnimationFrame(animate);
+}
+
+// Handle window resize
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Start animation
+animate();
+
+// Expose test hook
+window.__fpp = {
+  get guard() { return state.guard; },
+  set guard(v) { state.guard = Math.max(0.06, Math.min(1, v)); },
+  state: state,
+};
+</script>
+</body>
+</html>
