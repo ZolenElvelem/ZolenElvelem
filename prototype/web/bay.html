@@ -199,7 +199,7 @@ function audioTick(dt) {
   if (!AC) return;
   const beachNear = Math.max(0, 1 - Math.abs(S.x - 700)/1400);
   const riding = S.mode === "surf" && S.surf && S.surf.phase === "ride";
-  gOcean.gain.value = riding ? 0.10 + 0.06*S.surf.spd
+  gOcean.gain.value = riding ? 0.10 + 0.06*S.surf.spd + (S.surf.gap < 0.25 ? (0.25-S.surf.gap)*0.5 : 0)
                              : 0.02 + 0.10*beachNear + 0.05*open();
   gBirds.gain.value = Math.max(0, open()-0.25) * 0.9;
   gPad.gain.value   = Math.max(0, open()-0.55) * 0.05;
@@ -387,14 +387,16 @@ function surfTick(dt) {
   if (s.phase === "wait") {
     s.waveX += dt * 260;
     if (s.waveX > -40 && s.waveX < 60) {
+      if (!s.cued) { s.cued = true; sSwoosh(); }   // the lift: your moment
       if (keys.e || keys.space) {
         s.phase = "ride"; keys.e = false; sSwoosh();
         s.h = 0.55; s.spd = 1.15; s.gap = 0.4; s.rideT = 0;
         s.snaps = 0; s.lipT = 0; s.dist = 0; s.trail = [];
         s.waveLen = 8 + Math.random()*3 + open()*2;
+        if (!S.rodeOnce) { S.rodeOnce = true; cap("Stay ahead of the foam.", 3); }
       }
     } else if (s.waveX >= 60) {
-      s.phase = "missed"; s.mt = 1.2;
+      s.phase = "missed"; s.mt = 1.2; s.cued = false;
       cap(["Missed. The sea doesn't care.", "Missed. The next one's gathering.", "Missed it, laughing."][reg()], 2);
     }
     if (keys.e && s.eReleased && s.waveX < -120) { // paddle in early
@@ -671,11 +673,25 @@ function drawSurf(t, horizon, ground, camX) {
   const s = S.surf, seaY = horizon + (ground-horizon)*0.62;
   const sx = PL.surfZone.x - camX;
   const wx = sx + s.waveX; // incoming wave bump
-  ctx.fillStyle = col(...P.foam); ctx.globalAlpha = 0.9;
+  const inWindow = s.waveX > -40 && s.waveX < 60;
+  const swell = inWindow ? 44 : 26;   // it stands up when it's yours
+  ctx.fillStyle = col(...P.seaFar); ctx.globalAlpha = 0.85;
   ctx.beginPath();
-  ctx.moveTo(wx-90, seaY+8);
-  ctx.quadraticCurveTo(wx, seaY-26-(open()*10), wx+90, seaY+8); ctx.fill();
+  ctx.moveTo(wx-110, seaY+8);
+  ctx.quadraticCurveTo(wx, seaY-swell-(open()*10), wx+110, seaY+8); ctx.fill();
   ctx.globalAlpha = 1;
+  if (inWindow) { // crest feathers white: the NOW cue
+    ctx.fillStyle = col(...P.foam);
+    ctx.beginPath();
+    ctx.moveTo(wx-34, seaY-swell+8);
+    ctx.quadraticCurveTo(wx, seaY-swell-6, wx+34, seaY-swell+8);
+    ctx.quadraticCurveTo(wx, seaY-swell+16, wx-34, seaY-swell+8); ctx.fill();
+    // and the water pulls at your feet
+    ctx.globalAlpha = 0.5;
+    for (let i = 0; i < 5; i++)
+      ctx.fillRect(sx-20+i*10, seaY + 4 + Math.sin(t*8+i)*2, 6, 2);
+    ctx.globalAlpha = 1;
+  }
   ctx.save(); ctx.translate(sx, seaY-4);
   ctx.fillStyle = col("#7a776e","#f2f2ea"); ctx.fillRect(-16, 2, 32, 5); // board
   ctx.fillStyle = "#20232a";
@@ -714,20 +730,46 @@ function drawRide(t) {
   ctx.lineTo(CX-140, baseY-10);
   for (let x = CX-140; x <= W; x += 18) ctx.lineTo(x, topY(Math.max(x,CX)));
   ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
-  // foam edge along the lip
-  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 3; ctx.globalAlpha = 0.55;
+  // contour bands parallel to the lip — the face reads as a slope
+  ctx.strokeStyle = "rgba(15,40,50,0.5)";
+  for (let b = 1; b <= 3; b++) {
+    ctx.lineWidth = 2; ctx.globalAlpha = 0.16 + 0.06*b;
+    ctx.beginPath();
+    for (let x = CX; x <= W; x += 18) ctx.lineTo(x, topY(x) + faceH(x)*(b/4));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // the pocket: the lit zone just ahead of the curl — where the power is
+  const pk = ctx.createLinearGradient(CX-10, 0, CX + W*0.16, 0);
+  pk.addColorStop(0, `rgba(255,248,220,${0.16 + 0.12*o})`);
+  pk.addColorStop(1, "rgba(255,248,220,0)");
+  ctx.fillStyle = pk;
+  ctx.beginPath(); ctx.moveTo(CX-10, H); ctx.lineTo(CX-10, topY(CX));
+  for (let x = CX; x <= CX + W*0.16; x += 12) ctx.lineTo(x, topY(x));
+  ctx.lineTo(CX + W*0.16, H); ctx.closePath(); ctx.fill();
+  // foam edge along the lip + spray blowing off it
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 4; ctx.globalAlpha = 0.7;
   ctx.beginPath();
   for (let x = CX; x <= W; x += 18) ctx.lineTo(x, topY(x));
   ctx.stroke(); ctx.globalAlpha = 1;
+  ctx.fillStyle = col(...P.foam);
+  for (let i = 0; i < 12; i++) {
+    const lx = CX + ((i*131 + t*260) % (W*0.7));
+    const ph2 = ((t*2 + i) % 1);
+    ctx.globalAlpha = 0.45 * (1-ph2);
+    ctx.fillRect(lx - ph2*30, topY(lx) - 4 - ph2*18, 3, 2);
+  }
+  ctx.globalAlpha = 1;
   // streaks running down the face — the water moving under you
   ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 1.5;
-  for (let k = 0; k < 9; k++) {
-    const ph = ((t*0.55*s.spd + k/9) % 1);
+  for (let k = 0; k < 14; k++) {
+    const ph = ((t*0.55*s.spd + k/14) % 1);
     const x = CX + ph * (W-CX), fh = faceH(x);
     if (fh < 20) continue;
-    ctx.globalAlpha = 0.14 + 0.2*o;
-    ctx.beginPath(); ctx.moveTo(x, topY(x)+8);
-    ctx.lineTo(x-14, topY(x) + fh*0.5); ctx.stroke();
+    const yb = topY(x) + fh * (0.25 + (k*37 % 50)/100);
+    ctx.globalAlpha = 0.12 + 0.18*o;
+    ctx.beginPath(); ctx.moveTo(x, yb);
+    ctx.lineTo(x-20, yb+9); ctx.stroke();
   }
   ctx.globalAlpha = 1;
   // sun glitter on the face, only when open
@@ -757,11 +799,27 @@ function drawRide(t) {
   }
   ctx.globalAlpha = 1;
   // player on the face
-  const px = CX + s.gap * (W*0.5);
-  const py = baseY - 8 - s.h * (faceH(px) - 14);
+  let px = CX + s.gap * (W*0.5);
+  let py = baseY - 8 - s.h * (faceH(px) - 14);
+  // the curl reaches for you when you're slow — menace you can see
+  if (s.phase === "ride" && s.gap < 0.25) {
+    const menace = 1 - s.gap/0.25;
+    ctx.fillStyle = col(...P.foam);
+    for (let i = 0; i < 5; i++) {
+      const fy = py - 14 + i*9, reach = menace * (34 + 18*Math.sin(t*7 + i*2));
+      ctx.globalAlpha = 0.55 * menace;
+      ctx.beginPath();
+      ctx.ellipse(CX + reach*0.6, fy, reach, 5, 0, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (s.gap < 0.14) { // it's got teeth now
+      const sh = (0.14 - s.gap) * 30;
+      px += (Math.random()-0.5) * sh; py += (Math.random()-0.5) * sh;
+    }
+  }
   s.trail.push([px, py]); if (s.trail.length > 26) s.trail.shift();
-  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 2.5;
-  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 1.5 + s.spd*2; // wake thickens with speed
+  ctx.globalAlpha = 0.35 + Math.min(0.4, (s.spd-1)*0.5);
   ctx.beginPath();
   s.trail.forEach(([tx, ty], i) => i ? ctx.lineTo(tx, ty+8) : ctx.moveTo(tx, ty+8));
   ctx.stroke(); ctx.globalAlpha = 1;
@@ -814,7 +872,8 @@ function promptTick(camX, ground) {
     }
   } else if (S.mode === "surf") {
     h = S.surf.phase === "ride" ? "carve ↑ ↓ · snap E off the top"
-      : S.surf.phase === "wait" ? "[E] catch it — or wait"
+      : S.surf.phase === "wait" ? (S.surf.waveX > -40 && S.surf.waveX < 60 ? "NOW — E"
+        : S.surf.waveX < -120 ? "wait for it… (E paddles in)" : "wait for it…")
       : "";
   }
   hintEl.textContent = h;
