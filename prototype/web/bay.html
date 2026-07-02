@@ -183,6 +183,9 @@ function noiseBurst(dur, filterType, freq, gain = 0.06) {
   src.connect(f).connect(g).connect(AC.destination); src.start();
 }
 const sGull    = () => tone(1150, 0.35, 0.05, "sawtooth", 480);
+const sSwoosh  = () => noiseBurst(0.4, "bandpass", 1200, 0.08);
+const sSnap    = () => { noiseBurst(0.25, "highpass", 2200, 0.09); tone(880, 0.35, 0.06); };
+const sTumble  = () => noiseBurst(0.8, "lowpass", 500, 0.12);
 const sTui     = () => { tone(980, 0.12, 0.08); setTimeout(() => noiseBurst(0.04, "highpass", 4000, 0.05), 130); setTimeout(() => tone(1320, 0.1, 0.07), 200); };
 const sClink   = () => { noiseBurst(0.05, "highpass", 3200, 0.07); tone(2300, 0.3, 0.05); };
 const sBell    = (f = 660) => tone(f, 0.8, 0.06);
@@ -195,7 +198,9 @@ let chirpAt = 0;
 function audioTick(dt) {
   if (!AC) return;
   const beachNear = Math.max(0, 1 - Math.abs(S.x - 700)/1400);
-  gOcean.gain.value = 0.02 + 0.10*beachNear + 0.05*open();
+  const riding = S.mode === "surf" && S.surf && S.surf.phase === "ride";
+  gOcean.gain.value = riding ? 0.10 + 0.06*S.surf.spd
+                             : 0.02 + 0.10*beachNear + 0.05*open();
   gBirds.gain.value = Math.max(0, open()-0.25) * 0.9;
   gPad.gain.value   = Math.max(0, open()-0.55) * 0.05;
   chirpAt -= dt;
@@ -344,48 +349,103 @@ function endCard() {
   cap("(Refresh to live it differently.)", 8);
 }
 
-// ── surf toy ─────────────────────────────────────────────────────────
+// ── surf toy (v2: the pocket, the curl, the lip) ─────────────────────
 function startSurf() {
   S.mode = "surf";
-  S.surf = { phase: "wait", waveX: -600, py: 0, bal: 0, rideT: 0, rides: 0, eReleased: false };
+  S.surf = {
+    phase: "wait", waveX: -600, rides: 0, eReleased: false,
+    h: 0.45, spd: 1.0, gap: 0.4, rideT: 0, waveLen: 0,
+    snaps: 0, snapCd: 0, lipT: 0, dist: 0,
+    trail: [], spray: [], tumbleT: 0,
+  };
   cap(["A chore you happen to love.",
        "The water takes your weight like it remembers you.",
        "The water is lit from inside."][reg()], 3);
-  cap("E as the wave lifts you. Lean ← → to stay on.", 3.5);
+  cap("E as it lifts you. Then: carve ↑ ↓, snap with E off the top.", 4);
+}
+function endRide(s, cause) {
+  s.rides++;
+  const earned = Math.min(0.022 * s.rideT + 0.014 * s.snaps, 0.1);
+  soften(earned);
+  if (cause === "curl")  { cap("The whitewater takes you. The sea shrugs.", 2.5); }
+  if (cause === "lip")   { cap("Over the falls.", 2); }
+  if (cause === "close") {
+    cap(s.snaps >= 3 ? "The bay noticed that one."
+        : s.rideT > 7 ? ["Something unclenches a finger.", "Shoulders down an inch.", "Fourteen again — the only good way."][reg()]
+        : "Clean.", 2.5);
+  }
+  if (s.rides >= 3) {
+    setTimeout(() => { if (S.mode === "surf") { S.mode = "walk"; S.surf = null; cap("Salt in your eyebrows.", 2.5); } }, 1400);
+  } else {
+    s.phase = "between"; s.bt = 1.6;
+  }
 }
 function surfTick(dt) {
   const s = S.surf;
   if (!keys.e) s.eReleased = true;
+
   if (s.phase === "wait") {
     s.waveX += dt * 260;
     if (s.waveX > -40 && s.waveX < 60) {
-      if (keys.e || keys.space) { s.phase = "ride"; s.rideT = 0; s.bal = 0; keys.e = false; }
+      if (keys.e || keys.space) {
+        s.phase = "ride"; keys.e = false; sSwoosh();
+        s.h = 0.55; s.spd = 1.15; s.gap = 0.4; s.rideT = 0;
+        s.snaps = 0; s.lipT = 0; s.dist = 0; s.trail = [];
+        s.waveLen = 8 + Math.random()*3 + open()*2;
+      }
     } else if (s.waveX >= 60) {
       s.phase = "missed"; s.mt = 1.2;
       cap(["Missed. The sea doesn't care.", "Missed. The next one's gathering.", "Missed it, laughing."][reg()], 2);
     }
+    if (keys.e && s.eReleased && s.waveX < -120) { // paddle in early
+      S.mode = "walk"; S.surf = null; keys.e = false;
+      cap("You wade in. The bay carries on without you.", 3);
+    }
   } else if (s.phase === "missed") {
     s.mt -= dt; if (s.mt <= 0) { s.waveX = -600 - Math.random()*200; s.phase = "wait"; }
+  } else if (s.phase === "between") {
+    s.bt -= dt; if (s.bt <= 0) { s.waveX = -650 - Math.random()*250; s.phase = "wait"; }
   } else if (s.phase === "ride") {
-    s.rideT += dt;
-    s.bal += (Math.sin(s.rideT*2.1)*0.55 + Math.sin(s.rideT*3.7)*0.35) * dt * (1.1 - 0.4*open());
-    if (keys.arrowleft || keys.a) s.bal -= dt*1.5;
-    if (keys.arrowright || keys.d) s.bal += dt*1.5;
-    if (Math.abs(s.bal) > 1 || s.rideT > 6) {
-      const good = s.rideT;
-      s.rides++;
-      soften(Math.min(0.028 * good, 0.09));
-      cap(good > 4.5
-        ? ["Something unclenches a finger.", "Your shoulders come down an inch.", "Fourteen again — the only good way."][reg()]
-        : "Short one.", 2.5);
-      if (s.rides >= 3) { S.mode = "walk"; S.surf = null; cap("Salt in your eyebrows.", 2.5); return; }
-      s.phase = "wait"; s.waveX = -650 - Math.random()*250;
+    s.rideT += dt; s.snapCd -= dt;
+    const up   = keys.arrowup   || keys.w || keys.arrowright || keys.d;
+    const down = keys.arrowdown || keys.s || keys.arrowleft  || keys.a;
+    const h0 = s.h;
+    if (up)   s.h += 0.95 * dt;
+    if (down) s.h -= 0.95 * dt;
+    s.h -= 0.10 * dt;                       // gravity always wins slowly
+    s.h = Math.max(0, Math.min(1, s.h));
+    const dh = s.h - h0;
+    if (dh < 0) s.spd += (-dh) * 3.4;       // dropping down the face = speed
+    if (dh > 0) s.spd -= dh * 1.5;          // climbing costs, but not everything
+    s.spd += (1.0 - s.spd) * 0.4 * dt;      // the wave sets the tempo
+    if (s.gap > 1.0) s.spd -= 0.5 * dt;     // no push out on the shoulder
+    s.spd = Math.max(0.5, Math.min(2.4, s.spd));
+    s.gap += (s.spd - 1.0) * 0.22 * dt;
+    s.gap = Math.min(1.15, s.gap);
+    s.dist += s.spd * dt;
+    // the lip: linger too long up top and it takes you
+    if (s.h > 0.92) { s.lipT += dt; if (s.lipT > 0.6) { s.phase = "tumble"; s.tumbleT = 1.6; sTumble(); endRide(s, "lip"); return; } }
+    else s.lipT = 0;
+    // snap off the top
+    if (keys.e && s.eReleased && s.snapCd <= 0 && s.h > 0.62) {
+      keys.e = false; s.eReleased = false; s.snapCd = 0.6;
+      s.snaps++; s.h -= 0.25; s.spd += 0.45; sSnap();  // the turn projects you down the line
+      for (let i = 0; i < 22; i++)
+        s.spray.push({ x: 0, y: 0, vx: -40-Math.random()*120, vy: -60-Math.random()*90, life: 0.6+Math.random()*0.5, big: true });
     }
+    // the curl catches you
+    if (s.gap <= 0.02) { s.phase = "tumble"; s.tumbleT = 1.6; sTumble(); endRide(s, "curl"); return; }
+    // the wave closes out
+    if (s.rideT > s.waveLen) { s.phase = "tumble"; s.tumbleT = 1.0; sSwoosh(); endRide(s, "close"); return; }
+    // steady spray at speed
+    if (s.spd > 1.3 && Math.random() < (s.spd-1.2))
+      s.spray.push({ x: 0, y: 0, vx: -30-Math.random()*60, vy: -10-Math.random()*40, life: 0.4+Math.random()*0.3 });
+  } else if (s.phase === "tumble") {
+    s.tumbleT -= dt;
+    if (s.tumbleT <= 0 && s.phase === "tumble") s.phase = "between", s.bt = 0.8;
   }
-  if (keys.e && s.eReleased && s.phase === "wait" && s.waveX < -120) { // paddle in early
-    S.mode = "walk"; S.surf = null; keys.e = false;
-    cap("You wade in. The bay carries on without you, comfortably.", 3);
-  }
+  for (const p of s.spray) { p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 160*dt; p.life -= dt; }
+  s.spray = s.spray.filter(p => p.life > 0);
 }
 
 // ── scripted beat: the phone call ────────────────────────────────────
@@ -403,6 +463,7 @@ function maybePhone() {
 
 // ── drawing ──────────────────────────────────────────────────────────
 function draw(t) {
+  if (S.mode === "surf" && (S.surf.phase === "ride" || S.surf.phase === "tumble")) { drawRide(t); return; }
   const o = open();
   const horizon = H*0.42, ground = H*0.78;
   const camX = Math.max(0, Math.min(S.x - W/2, WORLD_W - W));
@@ -606,33 +667,141 @@ function drawPlayer(x, y, t) {
   }
 }
 function drawSurf(t, horizon, ground, camX) {
+  // waiting outside the break: the lineup view
   const s = S.surf, seaY = horizon + (ground-horizon)*0.62;
-  const px = 560 - camX + (S.x-560)*0; // fixed surf spot on screen coords
   const sx = PL.surfZone.x - camX;
-  // incoming wave bump
-  const wx = sx + s.waveX;
+  const wx = sx + s.waveX; // incoming wave bump
   ctx.fillStyle = col(...P.foam); ctx.globalAlpha = 0.9;
   ctx.beginPath();
   ctx.moveTo(wx-90, seaY+8);
   ctx.quadraticCurveTo(wx, seaY-26-(open()*10), wx+90, seaY+8); ctx.fill();
   ctx.globalAlpha = 1;
-  const riding = s.phase === "ride";
-  const bx = riding ? wx : sx, by = riding ? seaY-24 : seaY-4;
-  const lean = riding ? s.bal*0.5 : 0;
-  ctx.save(); ctx.translate(bx, by); ctx.rotate(lean);
+  ctx.save(); ctx.translate(sx, seaY-4);
   ctx.fillStyle = col("#7a776e","#f2f2ea"); ctx.fillRect(-16, 2, 32, 5); // board
   ctx.fillStyle = "#20232a";
   ctx.fillRect(-6, -26, 12, 24);
   ctx.beginPath(); ctx.arc(0, -32, 6, 0, 7); ctx.fill();
   ctx.restore();
-  if (riding) { // spray
-    ctx.fillStyle = col(...P.foam);
-    for (let i=0;i<8;i++) {
-      ctx.globalAlpha = 0.5*Math.random();
-      ctx.fillRect(bx-20-Math.random()*20, by+6-Math.random()*10, 3, 3);
+}
+
+function drawRide(t) {
+  const o = open(), s = S.surf;
+  const seaTop = H*0.30, baseY = H*0.88;
+  const CX = W*0.22;                                    // where the curl lives
+  // sky
+  const sky = ctx.createLinearGradient(0,0,0,seaTop*1.4);
+  sky.addColorStop(0, col(...P.skyTop)); sky.addColorStop(1, col(...P.skyBot));
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,seaTop+2);
+  // far shore parallax, drifting with speed — motion without a meter
+  const drift = (s.dist*90) % (W+400);
+  ctx.fillStyle = col(...P.hill); ctx.globalAlpha = 0.6;
+  ctx.beginPath(); ctx.moveTo(W-drift-200, seaTop);
+  ctx.quadraticCurveTo(W-drift, seaTop-46, W-drift+200, seaTop); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(W-drift+500, seaTop);
+  ctx.quadraticCurveTo(W-drift+650, seaTop-30, W-drift+800, seaTop); ctx.fill();
+  ctx.globalAlpha = 1;
+  // open sea behind the wave
+  const sea = ctx.createLinearGradient(0,seaTop,0,H);
+  sea.addColorStop(0, col(...P.seaFar)); sea.addColorStop(1, col(...P.seaNear));
+  ctx.fillStyle = sea; ctx.fillRect(0,seaTop,W,H-seaTop);
+  // the face: tall at the curl, tapering to the shoulder
+  const faceH = x => Math.max(0, (baseY-seaTop-30) * (1 - (x-CX)/(W*1.15)));
+  const topY  = x => baseY - faceH(x) + Math.sin(x*0.02 + t*2.5)*4;
+  const face = ctx.createLinearGradient(0,seaTop,0,baseY);
+  face.addColorStop(0, col(...P.seaFar)); face.addColorStop(1, col(...P.seaNear));
+  ctx.fillStyle = face;
+  ctx.beginPath(); ctx.moveTo(CX-140, H);
+  ctx.lineTo(CX-140, baseY-10);
+  for (let x = CX-140; x <= W; x += 18) ctx.lineTo(x, topY(Math.max(x,CX)));
+  ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+  // foam edge along the lip
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 3; ctx.globalAlpha = 0.55;
+  ctx.beginPath();
+  for (let x = CX; x <= W; x += 18) ctx.lineTo(x, topY(x));
+  ctx.stroke(); ctx.globalAlpha = 1;
+  // streaks running down the face — the water moving under you
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 1.5;
+  for (let k = 0; k < 9; k++) {
+    const ph = ((t*0.55*s.spd + k/9) % 1);
+    const x = CX + ph * (W-CX), fh = faceH(x);
+    if (fh < 20) continue;
+    ctx.globalAlpha = 0.14 + 0.2*o;
+    ctx.beginPath(); ctx.moveTo(x, topY(x)+8);
+    ctx.lineTo(x-14, topY(x) + fh*0.5); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // sun glitter on the face, only when open
+  if (o > 0.5) {
+    ctx.fillStyle = col(...P.glare);
+    for (let i = 0; i < 14; i++) {
+      const gx = CX + ((i*173 + t*140) % (W-CX)), gy = topY(gx) + faceH(gx)*(0.2+((i*89)%60)/100);
+      ctx.globalAlpha = (o-0.5) * Math.abs(Math.sin(t*3+i)) * 0.7;
+      ctx.fillRect(gx, gy, 3, 2);
     }
     ctx.globalAlpha = 1;
   }
+  // whitewater left of the curl
+  ctx.fillStyle = col(...P.foam);
+  ctx.globalAlpha = 0.92;
+  ctx.beginPath(); ctx.moveTo(CX-140, H); ctx.lineTo(CX-140, baseY-14);
+  for (let x = CX-140; x <= CX+8; x += 12)
+    ctx.lineTo(x, baseY-14 - Math.abs(Math.sin(x*0.08+t*6))*26 - (x-CX+140)*0.35);
+  ctx.lineTo(CX+8, H); ctx.closePath(); ctx.fill();
+  // the curl itself: tumbling arcs pouring off the lip
+  for (let i = 0; i < 6; i++) {
+    const a = t*4 + i*1.1;
+    ctx.globalAlpha = 0.5 + 0.3*Math.sin(a);
+    ctx.beginPath();
+    ctx.arc(CX - 6 + Math.sin(a)*10, topY(CX) + 18 + i*20, 12 + 4*Math.sin(a*1.3), 0, 7);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // player on the face
+  const px = CX + s.gap * (W*0.5);
+  const py = baseY - 8 - s.h * (faceH(px) - 14);
+  s.trail.push([px, py]); if (s.trail.length > 26) s.trail.shift();
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 2.5;
+  ctx.globalAlpha = 0.5;
+  ctx.beginPath();
+  s.trail.forEach(([tx, ty], i) => i ? ctx.lineTo(tx, ty+8) : ctx.moveTo(tx, ty+8));
+  ctx.stroke(); ctx.globalAlpha = 1;
+  // spray
+  ctx.fillStyle = col(...P.foam);
+  for (const p of s.spray) {
+    ctx.globalAlpha = Math.min(0.9, p.life*1.6);
+    const sz = p.big ? 4 : 3;
+    ctx.fillRect(px + p.x, py + p.y, sz, sz);
+  }
+  ctx.globalAlpha = 1;
+  if (s.phase === "tumble") {
+    ctx.save(); ctx.translate(px, py + (1.6-s.tumbleT)*40); ctx.rotate(s.tumbleT*9);
+    ctx.fillStyle = "#20232a";
+    ctx.fillRect(-6, -12, 12, 24);
+    ctx.beginPath(); ctx.arc(0, -18, 6, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = col(...P.foam);
+    for (let i = 0; i < 10; i++) {
+      ctx.globalAlpha = Math.random()*0.7;
+      ctx.fillRect(px-30+Math.random()*60, py-10+Math.random()*30, 4, 4);
+    }
+    ctx.globalAlpha = 1;
+  } else {
+    const slope = -0.5, lean = slope + (keys.arrowup||keys.w||keys.arrowright||keys.d ? -0.3 : 0)
+                              + (keys.arrowdown||keys.s||keys.arrowleft||keys.a ? 0.35 : 0);
+    ctx.save(); ctx.translate(px, py); ctx.rotate(lean*0.5);
+    ctx.fillStyle = col("#7a776e","#f2f2ea"); ctx.fillRect(-17, 4, 34, 5);
+    ctx.fillStyle = "#20232a";
+    const crouch = s.h < 0.35 ? 5 : 0;
+    ctx.fillRect(-6, -24+crouch, 12, 26-crouch);
+    ctx.beginPath(); ctx.arc(0, -30+crouch, 6, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+  // vignette
+  const vg = ctx.createRadialGradient(W/2,H/2,H*0.3, W/2,H/2,H*0.85);
+  vg.addColorStop(0,"rgba(0,0,0,0)");
+  vg.addColorStop(1,`rgba(10,10,12,${0.15 + S.guard*0.55})`);
+  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+  hintEl.textContent = s.phase === "ride" ? "carve ↑ ↓ · snap E off the top" : "";
 }
 const hintEl = document.getElementById("hint");
 function promptTick(camX, ground) {
@@ -644,7 +813,9 @@ function promptTick(camX, ground) {
       if (near(p)) { h = `[E] ${p.label}`; break; }
     }
   } else if (S.mode === "surf") {
-    h = S.surf.phase === "ride" ? "lean ← → " : "[E] catch it — or wait";
+    h = S.surf.phase === "ride" ? "carve ↑ ↓ · snap E off the top"
+      : S.surf.phase === "wait" ? "[E] catch it — or wait"
+      : "";
   }
   hintEl.textContent = h;
 }
