@@ -12,6 +12,7 @@ Read in order:
 6. [Retention & Replay Model](./06-retention-and-replay.md) — what keeps people coming back: returning vs. replaying, the persistent-town New Game+ model, structural incompleteness, and what retention scaffolding is banned.
 7. [Phase 0 Prototype Spec](./07-phase0-prototype-spec.md) — the concrete build plan for the first playable test: content, code structure, playtest protocol, and pass/fail conditions.
 8. [Prior Art](./08-prior-art.md) — the competitive/novelty check: which ingredients of this design exist in other games, and what remains (as far as searching can tell) unbuilt.
+9. [FPP Direction](./09-fpp-direction.md) — **decided 2026-07-02:** the game is stylised first-person. The camera grammar (live in first person, remember in third, endgame perception as others), migration spikes, and the cheap-agent build workflow. The 2D sketch line is preserved on branch `interactive-resume-base`.
 
 ## Key decisions locked after design review
 
