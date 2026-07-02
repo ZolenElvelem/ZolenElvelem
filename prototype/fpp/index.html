@@ -217,14 +217,15 @@ canvas.addEventListener('click', () => {
   if (!pointerLocked) canvas.requestPointerLock();
 });
 
-// Mouse movement (when pointer locked)
+// Mouse movement (when pointer locked). Persistent YXZ euler: yaw then pitch.
+const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 document.addEventListener('mousemove', e => {
-  if (!pointerLocked || !state.started) return;
-  const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  if (!state.started) return;
+  if (e.isTrusted && !pointerLocked) return; // real mice need pointer lock; synthetic test events pass
   euler.setFromQuaternion(camera.quaternion);
-  euler.rotateY(-e.movementX * 0.005);
-  euler.rotateX(-e.movementY * 0.005);
-  euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x));
+  euler.y -= e.movementX * 0.005;
+  euler.x -= e.movementY * 0.005;
+  euler.x = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, euler.x));
   camera.quaternion.setFromEuler(euler);
 });
 
@@ -234,25 +235,28 @@ let movementVector = new THREE.Vector3();
 
 function updateScene() {
   const now = performance.now();
-  const dt = Math.min((now - lastTime) / 1000, 0.016);
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
   if (!state.started) return;
 
-  // Movement (3 m/s)
+  // Movement (3 m/s), on the horizontal plane, following the camera's yaw
   const speed = 3;
   movementVector.set(0, 0, 0);
-  if (keys['w']) movementVector.z += speed;
-  if (keys['s']) movementVector.z -= speed;
-  if (keys['a']) movementVector.x -= speed;
-  if (keys['d']) movementVector.x += speed;
-
-  // Apply movement in camera's local space
-  movementVector.normalize().multiplyScalar(speed * dt);
-  const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion);
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-  camera.position.addScaledVector(forward, movementVector.z / speed);
-  camera.position.addScaledVector(right, movementVector.x / speed);
+  if (keys['w']) movementVector.z -= 1;
+  if (keys['s']) movementVector.z += 1;
+  if (keys['a']) movementVector.x -= 1;
+  if (keys['d']) movementVector.x += 1;
+  if (movementVector.lengthSq() > 0) {
+    movementVector.normalize().multiplyScalar(speed * dt);
+    const yaw = new THREE.Euler(0, 0, 0, 'YXZ');
+    yaw.setFromQuaternion(camera.quaternion);
+    // forward = where the camera faces horizontally (camera looks down -Z)
+    const fwd = new THREE.Vector3(-Math.sin(yaw.y), 0, -Math.cos(yaw.y));
+    const right = new THREE.Vector3(Math.cos(yaw.y), 0, -Math.sin(yaw.y));
+    camera.position.addScaledVector(fwd, -movementVector.z);
+    camera.position.addScaledVector(right, movementVector.x);
+  }
 
   // Clamp player inside reasonable area
   camera.position.x = Math.max(-45, Math.min(45, camera.position.x));
@@ -419,6 +423,7 @@ window.__fpp = {
   get guard() { return state.guard; },
   set guard(v) { state.guard = Math.max(0.06, Math.min(1, v)); },
   state: state,
+  camera: camera,
 };
 </script>
 </body>
