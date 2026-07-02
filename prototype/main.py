@@ -5,23 +5,28 @@ from .render import ask, rule, say
 from .world import DAYS, NAME_TRUST, TRUST_NEEDED, Player, Tier, World
 
 
-def pick(variants: dict, tier: Tier) -> str:
-    """Select the variant for a tier, falling back toward OPAQUE."""
+def pick(variants: dict, tier: Tier):
+    """Select the entry for a tier, falling back toward OPAQUE."""
     for t in range(tier, Tier.OPAQUE + 1):
         if Tier(t) in variants:
             return variants[Tier(t)]
     return variants[min(variants)]
 
 
+def rotate(seq: list, n: int) -> str:
+    """Cycle deterministically through authored variants."""
+    return seq[n % len(seq)]
+
+
 # ── actions ──────────────────────────────────────────────────────────
 
 def do_surf(p: Player, w: World) -> None:
-    say(pick(content.SURF, p.tier))
+    say(rotate(pick(content.SURF, p.tier), w.use("surf")))
     p.soften(0.05)
 
 
 def do_pub(p: Player, w: World) -> None:
-    say(pick(content.PUB, p.tier))
+    say(rotate(pick(content.PUB, p.tier), w.use("pub")))
     if w.day >= 5 and p.tier <= Tier.TRANSLUCENT and "pub_word" not in p.signals:
         say(content.PUB_WORD)
         p.signals.add("pub_word")
@@ -29,7 +34,7 @@ def do_pub(p: Player, w: World) -> None:
 
 
 def do_bench(p: Player, w: World) -> None:
-    say(pick(content.BENCH, p.tier))
+    say(rotate(pick(content.BENCH, p.tier), w.use("bench")))
     p.soften(0.04)
 
 
@@ -40,7 +45,7 @@ def do_reserve(p: Player, w: World) -> None:
 
 
 def do_stay_in(p: Player, w: World) -> None:
-    say(content.STAY_IN)
+    say(rotate(content.STAY_IN, w.use("stay_in")))
     p.harden(0.02)
 
 
@@ -50,11 +55,11 @@ def do_visit_mara(p: Player, w: World) -> None:
         p.trust += 1
 
     if p.named_it:
-        say(content.MARA_NAMED)
+        say(rotate(content.MARA_NAMED, w.use("mara_named")))
         p.soften(0.01)
         return
 
-    say(pick(content.MARA_PLAIN, p.tier))
+    say(rotate(pick(content.MARA_PLAIN, p.tier), w.use("mara_plain")))
 
     if w.day >= 3 and p.tier <= Tier.TRANSLUCENT and "empties" not in p.signals:
         say(content.MARA_EMPTIES)
@@ -181,7 +186,8 @@ def run() -> None:
         day_events(p, w)
         for slot in ("morning", "afternoon"):
             w.tier_time[p.tier] += 1
-            say(pick(content.AMBIENT, p.tier))
+            if slot == "morning":
+                say(rotate(pick(content.AMBIENT, p.tier), w.day - 1))
             acts = available_actions(p)
             labels = [label for label, _ in acts]
             choice = ask(f"({slot}) What do you do?", labels)

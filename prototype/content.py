@@ -35,61 +35,112 @@ WEATHER = [
     "Wednesday. Still. The kind of still that feels aimed.",
 ]
 
+# Ambient/action prose is authored in VARIANT LISTS per tier and rotated
+# (by day for ambient, by use-count for actions) so the register stays
+# constant while the surface changes — repetition of register is the
+# design; repetition of sentences is a bug (playtest finding #1). In the
+# full game this variety is the batched-LLM text layer's job.
+
 AMBIENT = {
-    Tier.OPAQUE: """
+    Tier.OPAQUE: ["""
 The street is grey and quick. People keep their heads down over their
 errands; the sea is just weather. You get where you're going.
-""",
-    Tier.TRANSLUCENT: """
+""", """
+The town does its errands around you. Someone says your name outside
+the dairy; by the time you turn they've moved on, which suits you.
+""", """
+Low-tide smell, gulls arguing over something by the ramp. You take the
+short way. There's nothing on the street you need.
+"""],
+    Tier.TRANSLUCENT: ["""
 A tūī is working the flame tree by the dairy. Mrs Hema lifts two fingers
 off the pump handle as you pass — the full local salute. Out past the
 bar, the bay is gunmetal turning green.
-""",
-    Tier.CLEAR: """
+""", """
+Shona's chalkboard says the pies are back. Two kids' bikes lie outside
+the dairy at angles that mean their owners left in a hurry, happily.
+The bay is doing its slow silver thing.
+""", """
+Old Man Tāne's dog inspects you at the corner and approves. Down the
+street someone's hammering — the roof going on at the Hemara place,
+one sheet of iron a weekend.
+"""],
+    Tier.CLEAR: ["""
 The morning is enormous. Light moves on the estuary like something
 poured; kids drag boards down Rise Road arguing about whose wave it was;
 behind the takeaway someone is laughing in two languages. The bay keeps
 opening the longer you look at it.
-""",
+""", """
+Everything is specific today: the exact green of the estuary over the
+sandbars, the squeak of the pub sign, Mrs Hema singing to the pie warmer
+when she thinks the shop's empty. The town is made of ten thousand small
+kept promises.
+""", """
+You catch yourself grinning at nothing on Rise Road. A kererū crashes
+about in the pūriri like a drunk angel. The morning doesn't ask you to
+earn it.
+"""],
 }
 
 SURF = {
-    Tier.OPAQUE: """
+    Tier.OPAQUE: ["""
 You paddle out because it's what you do. The sets are workmanlike and so
 are you. You put in your time, catch a few, come in cold. Something in
 you unclenches, barely, like a fist relaxing one finger.
-""",
-    Tier.TRANSLUCENT: """
+""", """
+Grey walls, close together. You go through the motions, and the motions
+— to be fair — go through you too. You come in when your arms say so.
+"""],
+    Tier.TRANSLUCENT: ["""
 Second wave of the set, and for six or seven seconds there is nothing in
 the world that needs anything from you. You come in with salt in your
 eyebrows and your shoulders an inch lower than they went out.
-""",
-    Tier.CLEAR: """
+""", """
+You trade waves with a kid who's better than you and generous about it.
+On the drive home your hands remember the water and keep being quietly
+pleased about it on the wheel.
+"""],
+    Tier.CLEAR: ["""
 The wave stands up and you are in the exact place the ocean decided to
 be generous. Time goes wide. You can hear your own laugh over the
 whitewater, fourteen again in the only way that was ever good, and when
 you finally wade in, the whole bay is lit like it's pleased with you.
-""",
+""", """
+Between sets the bay goes so quiet you can hear a dog barking a
+kilometre of water away. You sit up on the board, legs in the green
+light, exactly the size you actually are — which today, for once, is
+not a problem.
+"""],
 }
 
 PUB = {
-    Tier.OPAQUE: """
+    Tier.OPAQUE: ["""
 The pub is loud in a way that asks nothing. You have one, watch the
 replay above the bar, nod to the same four people you always nod to,
 and leave. Transaction complete.
-""",
-    Tier.TRANSLUCENT: """
+""", """
+Same stool, same replay, same nods. Rewi asks how the family's keeping
+and you say good thanks, and that is the whole of the transaction.
+"""],
+    Tier.TRANSLUCENT: ["""
 Rewi pours yours before you reach the bar. The talk is snapper and
 council rates and whose kid made the rep team. It's nothing, and it's
 also the sound of the town holding itself together.
-""",
-    Tier.CLEAR: """
+""", """
+Darts night. You're rubbish, publicly, and it's somehow the best hour
+of the day — being rubbish at darts here is a kind of citizenship.
+"""],
+    Tier.CLEAR: ["""
 Rewi pours yours before you reach the bar and slides it over with the
 exact nod his father used to use. Around you the pub is a loom — every
 conversation a thread you can see being woven into the town. Old Man
 Tāne is telling the eel story again and three people who've heard it
 fifty times are leaning in anyway, because that's what the story is for.
-""",
+""", """
+Someone's guitar has come out of someone's ute. By nine the whole bar is
+finding the harmonies to a song about a river none of them have seen,
+and Rewi turns the tap off so he can listen properly.
+"""],
 }
 
 PUB_WORD = """
@@ -100,24 +151,35 @@ glass down. "You didn't hear it from me."
 """
 
 BENCH = {
-    Tier.OPAQUE: """
+    Tier.OPAQUE: ["""
 The bench above the point. You sit for a while. The sea does what the
 sea does. Your phone stays in your pocket, which is something.
-""",
-    Tier.TRANSLUCENT: """
+""", """
+You sit. Boats come in around the point, one by one, on rails of their
+own wake. Your shoulders drop half an inch without asking you first.
+"""],
+    Tier.TRANSLUCENT: ["""
 The bench above the point, initials carved all over it like a guest
 book. Yours are here somewhere. You were seventeen, terrified, and she
 kissed you first. The memory arrives and you let it sit down next to
 you.
-""",
-    Tier.CLEAR: """
+""", """
+A woman you half-know is leaving as you arrive; you swap the nod of two
+people who use the same church at different hours. The old initials
+hold the armrest together like stitching.
+"""],
+    Tier.CLEAR: ["""
 The bench above the point. Yours are here somewhere among the initials —
 seventeen, terrified, kissed first. Today you can also see all the
 others: dates and hearts and one set of tiny letters low on the leg
 where a child could reach. Sixty years of people bringing the biggest
 thing they had up to this bench because the view was the only thing big
 enough to hold it. You are in a long queue of hearts. It helps.
-""",
+""", """
+A grandfather is teaching a small girl how to hold her chips so the
+gulls miss her fingers. Their laughter goes up the hill like smoke.
+You'll remember this one; you can tell while it's still happening.
+"""],
 }
 
 RESERVE = """
@@ -131,29 +193,45 @@ You stand there for a long time. You have walked past the bottom of this
 track a thousand times. It has been here the whole of your life.
 """
 
-STAY_IN = """
+STAY_IN = ["""
 You keep the curtains half-drawn and the day at arm's length. Toast,
 admin, the radio talking to itself in the kitchen. Nothing gets in.
 It works.
-"""
+""", """
+Curtains, kettle, radio. The day knocks a couple of times and gives up.
+Quiet as an unplugged fridge, and about as nourishing.
+"""]
 
 MARA_PLAIN = {
-    Tier.OPAQUE: """
+    Tier.OPAQUE: ["""
 Mara's place smells of toast and WD-40 like always. You talk about the
 rugby and the roof she keeps meaning to do. The conversation stays in
 the shallows where it's safe to stand. It's fine.
-""",
-    Tier.TRANSLUCENT: """
+""", """
+Tea at Mara's, strong enough to stand a spoon in. She tells the story
+about the courier and the goat and you both laugh in the right places.
+Nothing is said. Nothing was going to be.
+"""],
+    Tier.TRANSLUCENT: ["""
 Mara's place, toast and WD-40. She's glad to see you — she's always glad
 to see you — but twice she starts a sentence and lets it go, like a wave
 she decided not to catch.
-""",
-    Tier.CLEAR: """
+""", """
+She's rearranged the kitchen again — third time this year, everything a
+handspan from where it lived. "Keeps me busy," she says, to the cupboard
+she's holding open, not really to you.
+"""],
+    Tier.CLEAR: ["""
 Mara's laugh is a beat late today, and it doesn't get all the way to her
 eyes. She fills the kettle and watches it like it might say something.
 The kitchen is very clean. It's the cleanness of someone gripping the
 edges of their days.
-""",
+""", """
+There's a glass upside-down on the draining rack that she moves out of
+your eyeline with one practised motion, mid-sentence, the way you'd
+brush away a fly. Her voice doesn't change at all while she does it.
+That's the part that stays with you on the walk home.
+"""],
 }
 
 MARA_EMPTIES = """
@@ -163,11 +241,16 @@ Heavier than one person's fortnight. You stand in the driveway holding
 the lid a second longer than you need to.
 """
 
-MARA_NAMED = """
+MARA_NAMED = ["""
 You don't talk about it every time now. You don't have to. You wash, she
 dries, and the radio does the heavy lifting. Once she looks over at you
 and doesn't say thanks, and you don't say you're welcome.
-"""
+""", """
+She's counting days now, privately — you can tell because Tuesday she
+said "eleven" to the window, apropos of nothing, and dared you with the
+back of her head to ask. You didn't. You put the kettle on. That was
+the right answer.
+"""]
 
 REGRESSED_INTRO = """
 There's a moment — she's at the sink, back to you — when the thing

@@ -79,3 +79,10 @@ class World:
     father_felt: float = 0.0
     father_tier: Tier = Tier.TRANSLUCENT
     tier_time: dict = field(default_factory=lambda: {t: 0 for t in Tier})
+    uses: dict = field(default_factory=dict)
+
+    def use(self, key: str) -> int:
+        """Return how many times `key` has been used before, and count this one."""
+        n = self.uses.get(key, 0)
+        self.uses[key] = n + 1
+        return n

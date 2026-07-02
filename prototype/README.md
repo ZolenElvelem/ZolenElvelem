@@ -40,6 +40,10 @@ Five rules under test (see the spec for detail):
 **Strong pass:** anything in question 7's territory, unprompted.
 **Fail:** testers describe the hidden value as "the stat that makes text longer" — the perception layers are reading as content-gating, not as *seeing*. Rework the writing, not the systems.
 
+## Playtest log
+
+**Finding #1 (first tester, 2026-07-02):** verbatim repetition of ambient/action prose read as emptiness and made the format itself hard to see past — "got sick of" the identical tūī paragraph. Diagnosis: repetition of *register* is the design (a closed player's world should keep feeling flat), but repetition of *sentences* is a bug — it reads as "the game has no content" rather than "your perception is static." Fix applied: prose is now authored in variant lists per tier, rotated deterministically (ambient by day, morning only; action scenes by use-count). Implication for the full game: perception tiers need surface variety at constant emotional register, at volumes a small team can't hand-author — this is precisely the batched-LLM text layer's job (`03-technical-architecture.md`), and the tester independently arrived at the same conclusion. Second implication, already in the plan: text has no toy — the minutes drag without one (pillar 7); Phase 1's surf toy exists for exactly this.
+
 ## Notes for developers
 
 - Fully deterministic — no RNG. Two players who make the same choices see exactly the same ten days; all divergence is choice.
