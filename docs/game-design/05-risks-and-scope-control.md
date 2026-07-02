@@ -30,6 +30,18 @@ If a player learns to methodically investigate everything (checking every NPC/lo
 
 **Mitigation:** lean on the opacity-gated visibility mechanic as the real enforcement layer (a min-maxing player who never softens their Shadow literally cannot see everything, structurally, not just narratively) rather than relying on player restraint or game-design goodwill. Validate this specifically in Phase 2 playtesting — watch whether testers who play "completionist" style actually hit the visibility gate as intended.
 
+## Risk 6 — Translucency becomes strictly better, and the systems contradict the theme
+
+If a thick Shadow is only ever an impairment (muted world, hidden opportunities, hostile-reading NPCs), players will treat opacity as a debuff to minimize — healing collapses into min-maxing, and the game *says* "the Shadow isn't the enemy" while its systems treat it as exactly that.
+
+**Mitigation:** the protection tradeoff (system 1 in `02-core-systems.md`) is now a design commitment: opacity blunts incoming wounds and makes hard situations survivable, translucency means feeling everything at full volume. Every new wound/healing mechanic added during production must preserve this tension — treat any feature that makes translucency cost-free as a theme bug, not a balance tweak. Validate the tradeoff *emotionally* (not just numerically) in the Phase 0 debrief (question 3 in `07-phase0-prototype-spec.md`).
+
+## Risk 7 — The payoff is backloaded and the first hour is homework
+
+The emotional architecture of this game is inherently backloaded: years of relationships before the reveal means the opening carries no theme yet. Games in this genre die in the first hour, not the last — a player who bounces off a slow, unexplained opening never reaches anything the project exists to deliver.
+
+**Mitigation:** pillar 7 in the vision doc makes this a hard constraint: the first hour must be charming, tactile, and quietly mysterious on its own merits, for a player who will never finish. Concretely: the surf toy must be intrinsically fun with no rewards attached (a Phase 1 deliverable, not polish), and first-session playtests should be run and evaluated *separately* from full-arc playtests from Phase 2 onward. Related expectation-setting: cold replayability will be middling, like every game in this genre — the retention model is *returning* (moving world mid-game, persistent-town NG+ after), per `06-retention-and-replay.md`, and no extrinsic retention scaffolding (meta-progression, achievement checklists) may be added to compensate.
+
 ## Recommended immediate next step
 
 Before any engine work: run Phase 0 (paper prototype) with real outside playtesters. It's the cheapest possible test of the project's actual core bet — that modulating what a player perceives, rather than what they can do, can carry an emotional payload. Everything else in this plan is downstream of that bet paying off.

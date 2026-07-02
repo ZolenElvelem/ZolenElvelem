@@ -17,6 +17,8 @@ Each system below is written as: concept → what state it needs → what it pro
 
 **Softens through:** vulnerability moments, sustained presence with another character, honesty at a cost, grief processed (not avoided), reconciliation. Explicitly: softening is never a single dialogue choice with an instant payoff — model it as an exponential decay applied over multiple qualifying interactions, so healing reads as gradual, matching the design pillar that the Shadow is never removed, only made transparent.
 
+**The tradeoff: the Shadow protects (load-bearing design decision).** A thick Shadow must confer real mechanical benefit, not just impairment — otherwise translucency is strictly better and the whole mechanic degrades into a debuff players min-max away, with the systems contradicting pillar 2. Concretely: incoming wound events are *blunted* in proportion to current opacity (an armored character absorbs a loss that would devastate an open one; e.g. `felt_wound = base_wound × (1 − k × opacity)` with k around 0.5–0.7, to be tuned in Phase 0), and certain hard situations — confrontations, funerals, enduring a bad stretch — are more survivable while guarded. Translucency means feeling *everything* at full volume: richer world, deeper connection, and losses that land undampened. Opening up is therefore always a genuine wager, never a free upgrade. This single rule is what turns the metaphor into a game.
+
 **Open questions to lock before content production:**
 - Is `shadow_density` per-category visible to the player at all (a subtle UI), or fully implicit or fully hidden and only inferable, in keeping with "no stat screens"? Recommendation: hidden entirely for the first prototype; a diegetic mirror/journal reflection mechanic can surface it later instead of a UI meter.
 - What's the minimum event weight to move the needle — i.e., how many written "wound" and "healing" events are needed before Phase 2 content lock (see roadmap)?
@@ -30,6 +32,10 @@ Each system below is written as: concept → what state it needs → what it pro
 **State needed:** a day/season/year clock with a defined time-compression rule (recommend: 1 real-time hour ≈ 1 in-game day for "Living" scenes, with explicit sleep/skip-ahead to compress downtime — do not simulate every day 1:1 or content production becomes impossible for a small team).
 
 **Aging:** player and NPCs move through defined life-stage bands (child/teen/adult/elder) that swap character models, voice ranges, and available actions, not a continuous morph — cheaper to build and easier to make legible to the player.
+
+**The tactile toy (added after design review):** one physical activity — surfing, given the setting — must be built as a genuinely fun toy with *no rewards attached*, because a contemplative game lives or dies on whether simply existing in the town is pleasant for hours between the emotional beats. Curiosity carries the hours; the toy carries the minutes. It's also a free thematic channel: board feel, water rendering, and audio can all be modulated by Shadow opacity without a word of dialogue. This is a first-class deliverable of the Phase 1 technical prototype, not polish for later.
+
+**Playing the wounds, not just carrying them:** each life *starts at six*. The player is present when the first layers of Shadow form — they experience the moment the armor became necessary, rather than reading it as backstory. This makes the childhood arc the emotional load-bearing wall of the whole life, not a tutorial.
 
 **Open question:** what is the *smallest* set of "Living" verbs that still makes the town feel alive (recommend starting with 4: work, socialize, pursue-a-hobby, rest) — resist the urge to build a full life-sim verb set before Phase 2.
 
@@ -56,9 +62,16 @@ Each system below is written as: concept → what state it needs → what it pro
 - *The Shadow was never the enemy* is the personal, first-person payoff.
 - Your own follow-up idea — **people forgot how to see each other's six-year-old selves, and every tragedy in the game traces back to that** — is the causal engine that ties all of the above together and should be treated as the spine, not an addendum. Concretely: every major authored tragedy in the town's history (not just the player's threads) should have, buried in its cause chain, a moment where two people met only each other's Shadows.
 
+**Two constraints added after design review:**
+
+- **Not monocausal.** The "people meet only each other's Shadows" cause chain applies to the *avoidable* tragedies — the estrangements, the betrayals, the slow abandonments. Some griefs in the town must be genuinely blameless (illness, storm, accident), with no lesson attached. A world where every sorrow traces to the one cause reads as authored sermon even without preachy dialogue; against a backdrop of real randomness, the avoidable tragedies become the devastating category, which is exactly the point.
+- **"One consciousness" stays unconfirmed.** Of the three original mystery candidates, this is the one that tips into new-age territory if ever asserted. The Forgotten Promise is the plot mechanism; Shadow-as-exhausted-love is the personal payoff; the one-consciousness reading remains something an attentive player can construct and the game never confirms or denies. Ambiguity is what keeps people arguing about a game for years.
+
 **Clue delivery:** dreams, songs, children's drawings, recurring symbols scattered across eras. These should be *diegetic and skippable* — nothing the player needs a wiki to find, but nothing that interrupts a player who's not pursuing it either.
 
-**Open question:** what is the actual endgame *action*, mechanically? "Realization" needs a verb, not just a cutscene. Candidate: the "seeing the six-year-old in everyone" ability (system 7 below) becomes literally playable — the mystery's resolution is unlocking a permanent perception mode, not a cutscene reveal.
+**The endgame verb (decided): memory revisiting.** "Realization" needs a verb, not a cutscene. When the late-game "see the six-year-old in everyone" perception unlocks, the player can *re-enter specific scenes they already played* — the argument, the betrayal, the schoolyard — and watch them again through the new perception: same scene, same events, and now the terrified child inside the person who hurt you is visible. The realization is delivered as gameplay, and it only works because the player has years of first-hand scenes banked. Technical note: this requires scenes to be replayable from the event log from day one — flag key scenes for capture during Phase 2, not retrofitted in Phase 4.
+
+**Engineered "it was always there" moments.** Opacity-gated invisibility only teaches the player anything if they eventually *learn* things were hidden — otherwise hidden content is indistinguishable from content that doesn't exist. At least one designed moment must exist where new translucency reveals something on a path the player has walked dozens of times. That single moment retroactively re-frames the entire world and teaches the player to re-see everything. Build one such moment into the Phase 1 prototype and one into the vertical slice.
 
 ---
 
@@ -95,10 +108,12 @@ Use Option A as the simulation core for the entire town. Reserve a small allow-l
 
 ---
 
-## 7. Death & Transition
+## 7. Death, the Epilogue & Persistent-Town New Game+ (revised scope)
 
-**Concept:** On a character's death, the player is offered a next character from the persistent town — a direct descendant, an unrelated townsperson whose story intersected theirs, or (rarer, later-game) someone entirely new arriving in town. There is no game-over screen.
+**v1 scope decision:** one complete life is the game. Death is the ending — there is still no game-over screen, but "the world continues without you" is delivered as an **epilogue**, not a respawn: the town years later, someone retelling something you did, a place you shaped. Feeling the continuation may be more powerful than consuming it. The epilogue is also where **structural incompleteness is surfaced** — a glimpse of the shape of what this life never saw (a scene from a thread that was invisible to this character's wound profile), because missed content only motivates a return if the player can sense it exists.
 
-**Mechanical requirement:** the new character's starting `shadow_density` vector should be partly inherited/environmentally shaped by what the *previous* character did (a parent who was present lowers a child's starting wounds in specific categories; one who wasn't raises them) — this is what makes multi-life play feel causally connected rather than cosmetic.
+**Persistent-town New Game+ (the retention model, kept from the generational vision at a fraction of its cost):** starting a new game does *not* reset the town. The player begins as a different person — most naturally a child who was born during the previous playthrough — in the town the previous character shaped, where that character now exists as an NPC, a grave, a story people tell. Replaying isn't repetition; it's returning somewhere that remembers you. Mechanically this is a **single world-state snapshot handoff** at the end of a life (the event log, family records, and NPC states, aged forward), not continuous multi-generation simulation — which is what makes it affordable where full generational play is not. Full continuous generational simulation (the original vision) is deferred to post-v1 / expansion, and loses nothing by the deferral because the SQLite event-log architecture supports it from day one.
 
-**Late-game unlock:** "seeing the six-year-old in everyone" (referenced in system 4) should be a perception mode tied to a late character's accumulated translucency, carried forward — once earned, it persists across the transition into the next life, so its meaning compounds rather than resetting each death.
+**Inherited Shadow:** the NG+ character's starting `shadow_density` vector is partly shaped by what the previous character did (a parent who was present lowers a child's starting wounds in specific categories; one who wasn't raises them) — this is what makes cross-life play feel causally connected rather than cosmetic.
+
+**Late-game unlock carries forward:** "seeing the six-year-old in everyone" (system 4), once earned, persists into the NG+ life — a returning player sees the early game through the earned perception from hour one, converting the game's least-replayable asset (the reveal) into its recontextualization-replay motive. See `06-retention-and-replay.md`.
