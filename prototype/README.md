@@ -12,6 +12,8 @@ python3 -m prototype
 
 **Browser version:** open `prototype/web/index.html` — the same game as a single self-contained HTML file, click-to-choose, no server or dependencies. Easiest way to hand it to playtesters; the page tint also shifts subtly with the perception tier (the visual mechanic in miniature). The Python version remains the reference implementation; if the two diverge, the Python one wins.
 
+**Phase 1 preview sketch:** open `prototype/web/bay.html` — a playable 2D canvas scene (procedural art, synthesized audio, no assets) built in response to playtest finding #2: the text format itself was the barrier for some testers. Walk the bay, surf, sit on the bench, knock on doors; color saturation, birdlife, NPC liveliness, ambient sound layers, and the vignette all track your hidden state in real time, and the reserve track is literally not rendered until you're open enough. It demonstrates the perception-rendering pipeline and the toy — it does *not* carry the story or the thread system (that's what the text prototype tests). Ninety seconds to two minutes.
+
 ## What it is testing
 
 The project's core bet: **can modulating what a player perceives — rather than what they can do — carry emotional weight?** Everything in the game is filtered through a single hidden value (`guard`, the thickness of one Shadow layer: the character's trust, frozen at fourteen). It rises and falls with how you spend your days. It is never shown.
