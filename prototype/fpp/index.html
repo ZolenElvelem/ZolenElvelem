@@ -105,16 +105,16 @@ function buildScene() {
   dirLight.position.set(10, 15, 10);
   scene.add(dirLight);
 
-  // Ground plane (sand)
-  const groundGeom = new THREE.PlaneGeometry(100, 60);
+  // Ground plane (sand): 120 x 60 centered on origin, top surface y=0
+  const groundGeom = new THREE.PlaneGeometry(120, 60);
   const groundMat = new THREE.MeshBasicMaterial({ color: palette.sand.vivid });
   const ground = new THREE.Mesh(groundGeom, groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.userData.colors = { mat: groundMat, muted: palette.sand.muted, vivid: palette.sand.vivid };
   scene.add(ground);
 
-  // Road strip (runs down the middle)
-  const roadGeom = new THREE.PlaneGeometry(8, 50);
+  // Road strip: 120 long (x) by 6 wide (z), centered z=0, just above sand
+  const roadGeom = new THREE.PlaneGeometry(120, 6);
   const roadMat = new THREE.MeshBasicMaterial({ color: palette.road.vivid });
   const road = new THREE.Mesh(roadGeom, roadMat);
   road.position.set(0, 0.02, 0);
@@ -122,84 +122,97 @@ function buildScene() {
   road.userData.colors = { mat: roadMat, muted: palette.road.muted, vivid: palette.road.vivid };
   scene.add(road);
 
-  // Sea plane (to one side)
-  const seaGeom = new THREE.PlaneGeometry(100, 60);
+  // Sea plane: beach edge at z=+18, extending away to the horizon, below sand level
+  const seaGeom = new THREE.PlaneGeometry(300, 300);
   const seaMat = new THREE.MeshBasicMaterial({ color: palette.seaNear.vivid });
   const sea = new THREE.Mesh(seaGeom, seaMat);
-  sea.position.set(-60, 0.01, 0);
+  sea.position.set(0, -0.3, 168); // near edge z = 168 - 150 = +18
   sea.rotation.x = -Math.PI / 2;
   sea.userData.colors = { mat: seaMat, muted: palette.seaNear.muted, vivid: palette.seaNear.vivid };
   scene.add(sea);
 
-  // Buildings (4 simple boxes with pitched roofs)
+  // Buildings: one row on the z=-8 side of the road (opposite the sea)
   const buildingConfigs = [
-    { x: -20, z: 10, w: 8, h: 6, roofH: 3, pal: palette.bld1, name: 'dairy' },
-    { x: -5, z: 15, w: 10, h: 7, roofH: 3.5, pal: palette.bld2, name: 'pub' },
-    { x: 10, z: 12, w: 7, h: 5, roofH: 2.5, pal: palette.bld3, name: 'cottage' },
-    { x: 25, z: 18, w: 9, h: 6, roofH: 3, pal: palette.grey, name: 'grey' },
+    { x: -18, pal: palette.bld1, name: 'dairy' },
+    { x: -2,  pal: palette.bld2, name: 'pub' },
+    { x: 14,  pal: palette.bld3, name: 'cottage' },
+    { x: 28,  pal: palette.grey, name: 'grey' },
   ];
+  const buildings = [];
 
   buildingConfigs.forEach(cfg => {
-    // Building body
-    const bodyGeom = new THREE.BoxGeometry(cfg.w, cfg.h, cfg.w);
+    const w = 8, h = 5, d = 7, z = -8, roofH = 2;
+    // Building body: base sits on the ground (center y = h/2)
+    const bodyGeom = new THREE.BoxGeometry(w, h, d);
     const bodyMat = new THREE.MeshBasicMaterial({ color: cfg.pal.vivid });
     const body = new THREE.Mesh(bodyGeom, bodyMat);
-    body.position.set(cfg.x, cfg.h / 2, cfg.z);
+    body.position.set(cfg.x, h / 2, z);
     body.userData.colors = { mat: bodyMat, muted: cfg.pal.muted, vivid: cfg.pal.vivid };
+    body.userData.height = h;
     scene.add(body);
+    buildings.push(body);
 
-    // Pitched roof (two triangular faces forming a cone)
-    const roofGeom = new THREE.ConeGeometry(cfg.w / 2, cfg.roofH, 4);
+    // Pitched roof (4-sided cone, rotated to align ridges with the box)
+    const roofGeom = new THREE.ConeGeometry(Math.hypot(w / 2, d / 2) * 1.05, roofH, 4);
     const roofMat = new THREE.MeshBasicMaterial({ color: palette.roof.vivid });
     const roof = new THREE.Mesh(roofGeom, roofMat);
-    roof.position.set(cfg.x, cfg.h + cfg.roofH / 2, cfg.z);
+    roof.position.set(cfg.x, h + roofH / 2, z);
     roof.rotation.y = Math.PI / 4;
     roof.userData.colors = { mat: roofMat, muted: palette.roof.muted, vivid: palette.roof.vivid };
     scene.add(roof);
   });
 
-  // Flame tree: brown trunk + red sphere canopy
-  const trunkGeom = new THREE.CylinderGeometry(0.8, 1, 8, 8);
+  // Flame tree at (-26, 0, -5): slim trunk, small red canopy, under 4.5m tall
+  const trunkGeom = new THREE.CylinderGeometry(0.25, 0.25, 2.6, 8);
   const trunkMat = new THREE.MeshBasicMaterial({ color: palette.trunk.vivid });
   const trunk = new THREE.Mesh(trunkGeom, trunkMat);
-  trunk.position.set(-35, 4, 8);
+  trunk.position.set(-26, 1.3, -5);
   trunk.userData.colors = { mat: trunkMat, muted: palette.trunk.muted, vivid: palette.trunk.vivid };
   scene.add(trunk);
 
-  // Tree canopy: 3-4 red sphere blobs
-  for (let i = 0; i < 4; i++) {
-    const canopyGeom = new THREE.SphereGeometry(3 + Math.random() * 1.5, 8, 8);
-    const canopyMat = new THREE.MeshBasicMaterial({ color: palette.flame.vivid });
-    const canopy = new THREE.Mesh(canopyGeom, canopyMat);
-    const angle = (i / 4) * Math.PI * 2;
-    canopy.position.set(
-      -35 + Math.cos(angle) * 4,
-      10 + i * 1.5,
-      8 + Math.sin(angle) * 4
-    );
-    canopy.userData.colors = { mat: canopyMat, muted: palette.flame.muted, vivid: palette.flame.vivid };
-    canopy.userData.treeCanopy = true;
-    scene.add(canopy);
-  }
+  // Canopy: 4 red sphere blobs clustered around y=3.2
+  const canopy = [];
+  const canopySpec = [
+    { x: -26.0, y: 3.2, z: -5.0, r: 1.2 },
+    { x: -26.9, y: 3.0, z: -4.6, r: 0.9 },
+    { x: -25.2, y: 3.1, z: -5.3, r: 1.0 },
+    { x: -26.0, y: 3.9, z: -4.9, r: 0.9 },
+  ];
+  canopySpec.forEach(s => {
+    const cGeom = new THREE.SphereGeometry(s.r, 8, 8);
+    const cMat = new THREE.MeshBasicMaterial({ color: palette.flame.vivid });
+    const blob = new THREE.Mesh(cGeom, cMat);
+    blob.position.set(s.x, s.y, s.z);
+    blob.userData.colors = { mat: cMat, muted: palette.flame.muted, vivid: palette.flame.vivid };
+    scene.add(blob);
+    canopy.push(blob);
+  });
 
-  // Tūī bird: small black sphere in the tree
-  const tuiGeom = new THREE.SphereGeometry(0.4, 8, 8);
+  // Tūī bird: small black sphere sitting on the canopy edge
+  const TUI_BASE_Y = 3.7;
+  const tuiGeom = new THREE.SphereGeometry(0.15, 8, 8);
   const tuiMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
   const tui = new THREE.Mesh(tuiGeom, tuiMat);
-  tui.position.set(-33, 12, 10);
-  tui.userData.isTui = true;
+  tui.position.set(-25.0, TUI_BASE_Y, -4.4); // perched on the canopy edge, clear of the blobs
   tui.userData.hopAmount = 0;
-  tui.userData.gazeTime = 0;
   scene.add(tui);
 
-  return { ground, road, sea, tui };
+  // Invisible larger sphere as a forgiving gaze target around the bird
+  const gazeGeom = new THREE.SphereGeometry(0.6, 8, 8);
+  const gazeMat = new THREE.MeshBasicMaterial({ visible: false });
+  const gazeTarget = new THREE.Mesh(gazeGeom, gazeMat);
+  gazeTarget.position.copy(tui.position);
+  scene.add(gazeTarget);
+
+  return { ground, road, sea, tui, gazeTarget, buildings, canopy, TUI_BASE_Y };
 }
 
 const sceneObjs = buildScene();
 
-// Camera setup
-camera.position.set(0, 1.7, -15);
-camera.lookAt(0, 1.7, 0);
+// Camera setup: spawn on the road facing down the street toward -x
+// (buildings on the right, sea behind-left)
+camera.position.set(10, 1.7, 3);
+camera.quaternion.setFromEuler(new THREE.Euler(0, Math.PI / 2, 0, 'YXZ'));
 
 // Input handling
 const keys = {};
@@ -240,8 +253,8 @@ function updateScene() {
 
   if (!state.started) return;
 
-  // Movement (3 m/s), on the horizontal plane, following the camera's yaw
-  const speed = 3;
+  // Movement (4 m/s), on the horizontal plane, following the camera's yaw
+  const speed = 4;
   movementVector.set(0, 0, 0);
   if (keys['w']) movementVector.z -= 1;
   if (keys['s']) movementVector.z += 1;
@@ -258,9 +271,9 @@ function updateScene() {
     camera.position.addScaledVector(right, movementVector.x);
   }
 
-  // Clamp player inside reasonable area
-  camera.position.x = Math.max(-45, Math.min(45, camera.position.x));
-  camera.position.z = Math.max(-25, Math.min(30, camera.position.z));
+  // Clamp player: sand and road only, never past the beach edge onto the sea
+  camera.position.x = Math.max(-40, Math.min(40, camera.position.x));
+  camera.position.z = Math.max(-14, Math.min(16, camera.position.z));
   camera.position.y = state.childHeight ? 1.1 : 1.7;
 
   // Child height toggle (C key)
@@ -270,11 +283,12 @@ function updateScene() {
   }
   if (!keys['c']) state.childHeightLatch = false;
 
-  // Gaze interaction: raycast from camera center to check if looking at tūī
+  // Gaze interaction: raycast from camera center against the forgiving
+  // invisible sphere (r=0.6) around the tūī
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
   const tui = sceneObjs.tui;
-  const intersects = raycaster.intersectObject(tui);
+  const intersects = raycaster.intersectObject(sceneObjs.gazeTarget);
   const isGazing = intersects.length > 0 && intersects[0].distance < 50;
 
   if (isGazing && state.gazeStartTime === undefined) {
@@ -301,10 +315,11 @@ function updateScene() {
     state.gazeCooldown = undefined;
   }
 
-  // Bird hop animation
+  // Bird hop animation (brief y bounce above its perch)
   if (tui.userData.hopAmount > 0) {
     tui.userData.hopAmount -= dt * 2; // decay over 0.5s
-    tui.position.y = 12 + Math.max(0, tui.userData.hopAmount) * 1.5;
+    tui.position.y = sceneObjs.TUI_BASE_Y +
+      Math.sin(Math.max(0, tui.userData.hopAmount) * Math.PI) * 0.35;
   }
 
   // Update perception: colors, sky, fog, vignette
@@ -424,6 +439,7 @@ window.__fpp = {
   set guard(v) { state.guard = Math.max(0.06, Math.min(1, v)); },
   state: state,
   camera: camera,
+  objects: sceneObjs, // ground, road, sea, tui, gazeTarget, buildings, canopy
 };
 </script>
 </body>
