@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>FPP feel spike — guard-driven perception</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
+  #canvas { display: block; width: 100%; height: 100%; }
+  #start {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: #14140f; color: #e8e0c9; font: 19px Georgia, serif;
+    text-align: center; padding: 2em; cursor: pointer; z-index: 100;
+  }
+  #start small { opacity: 0.6; font-size: 14px; max-width: 32em; line-height: 1.6; }
+  #start .go { border: 1px solid #8a7c5f; padding: 0.6em 2.2em; border-radius: 4px; }
+  #hint {
+    position: fixed; top: 1.2em; left: 50%; transform: translateX(-50%);
+    font: 13px Georgia, serif; color: rgba(245, 239, 223, 0.7);
+    letter-spacing: 0.05em; pointer-events: none; text-align: center;
+  }
+  #cap {
+    position: fixed; left: 50%; bottom: 12vh; transform: translateX(-50%);
+    max-width: 34em; padding: .6em 1.1em; text-align: center;
+    font: italic 17px Georgia, serif; color: #f5efdf;
+    background: rgba(20,20,20,.55); border-radius: 6px;
+    opacity: 0; transition: opacity .6s ease; pointer-events: none;
+  }
+  #xh {
+    position: fixed; left: 50%; top: 50%; width: 3px; height: 3px;
+    margin: -1.5px 0 0 -1.5px; border-radius: 50%;
+    background: #fff; opacity: 0.4; pointer-events: none;
+  }
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    background: radial-gradient(circle at center, rgba(0,0,0,0), rgba(10,10,12,0.7));
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="hint">WASD move · mouse look · C child height · E interact</div>
+<div id="cap"></div>
+<div id="xh"></div>
+<div id="vignette"></div>
+<div id="start">
+  <div>FPP Feel Spike</div>
+  <small>A walkable street where perception shapes the world. Click to begin.</small>
+  <div class="go">begin</div>
+</div>
+
+<script type="module">
+import * as THREE from './three.min.js';
+
+"use strict";
+// ═══════════════════════════════════════════════════════════════════
+// F1: the interaction grammar of bay.html, in first person.
+// One value drives everything: guard (0 open … 1 armored).
+// ═══════════════════════════════════════════════════════════════════
+
+const canvas = document.getElementById('canvas');
+const vignetteEl = document.getElementById('vignette');
+const startEl = document.getElementById('start');
+const hintEl = document.getElementById('hint');
+const capEl = document.getElementById('cap');
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+
+// Palette: muted/vivid pairs (from bay.html)
+const palette = {
+  skyTop: { muted: 0x5a5e60, vivid: 0x7fc4e8 }, seaNear: { muted: 0x4a5251, vivid: 0x2ea3b5 },
+  sand:   { muted: 0x8f8a7c, vivid: 0xe8d5a2 }, road:    { muted: 0x6b6b66, vivid: 0x9a938a },
+  hill:   { muted: 0x5d635c, vivid: 0x4d8f4f }, bush:    { muted: 0x565c55, vivid: 0x2f7a3c },
+  trunk:  { muted: 0x6a655c, vivid: 0x7a5c3a }, roof:    { muted: 0x5c5a55, vivid: 0x8a4b3a },
+  bld1:   { muted: 0x75726b, vivid: 0xd8b46a }, bld2:    { muted: 0x6d6f6e, vivid: 0xb0cf9a },
+  bld3:   { muted: 0x7a746e, vivid: 0xe0937c }, grey:    { muted: 0x5d5d5a, vivid: 0x888880 },
+  flame:  { muted: 0x6a6258, vivid: 0xd4452a }, foam:    { muted: 0x9aa0a0, vivid: 0xeafcff },
+  np:     { muted: 0x5f5f5c, vivid: 0xc46a4a }, np2:     { muted: 0x61615e, vivid: 0x4a7ac4 },
+  bin:    { muted: 0x6e6e6a, vivid: 0x8a9296 },
+};
+
+// ── state ────────────────────────────────────────────────────────────
+const state = {
+  guard: 0.75, childHeight: false, started: false, audioCtx: null, gOcean: null,
+  t: 0, mode: 'walk', sitT: 0, sitReturn: null,
+  talked: {}, doorCd: {}, binClinks: 0, binWob: -10,
+  spirals: [{ found: false }, { found: false }, { found: false }],
+  carvingDone: false, phoneDone: false,
+  child: { on: false, x: 38, z: 0, life: 0, nextAt: 30 },
+  gulls: [], caps: [], capLog: [],
+};
+const open = () => 1 - state.guard;
+const reg = () => open() < 0.35 ? 0 : open() < 0.65 ? 1 : 2;
+const soften = a => { state.guard = Math.max(0.06, state.guard - a); };
+const wound = b => { const f = b * (1 - 0.6 * state.guard); state.guard = Math.min(0.95, state.guard + f); return f; };
+const reserveOpen = () => open() > 0.6 || state.spirals.every(s => s.found);
+
+// ── captions (ported from bay.html) ──────────────────────────────────
+let capUntil = 0;
+function cap(text, secs = 4.2) { state.caps.push([text, secs]); state.capLog.push(text); }
+function capTick(dt) {
+  if (capUntil > 0) { capUntil -= dt; if (capUntil <= 0) capEl.style.opacity = 0; return; }
+  if (state.caps.length && capUntil <= -0.4) {
+    const [t, secs] = state.caps.shift();
+    capEl.textContent = t; capEl.style.opacity = 1; capUntil = secs;
+  } else capUntil -= dt;
+}
+
+// ── dialogue (text copied exactly from bay.html) ─────────────────────
+const LINES = {
+  dairy: [
+    "Mrs Hema counts your change. \"Cold out.\"",
+    "\"Pies are back Thursday.\" Almost a smile.",
+    "She's singing to the pie warmer. \"You've got some colour back.\"",
+  ],
+  pub: [
+    "Rewi nods. You nod. The replay flickers.",
+    "\"Swell's building. Get out while it's clean.\"",
+    "\"This town tells you everything — if you're the right speed to hear it.\"",
+  ],
+  mara: [
+    "The door opens body-width. Rugby. Roof. Weather.",
+    "Twice she starts a sentence and lets it go.",
+    "Her kitchen is very, very clean. The bin outside is not light.",
+  ],
+  sit: [
+    "The sea does what the sea does.",
+    "Sixty years of initials. Yours are here somewhere.",
+    "Seventeen, terrified, kissed first — right here.",
+  ],
+};
+
+// ── audio: one-shot synths ported from bay.html ──────────────────────
+function initAudio() {
+  if (state.audioCtx) return;
+  const AC = state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const len = AC.sampleRate * 2, buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0); let last = 0;
+  for (let i = 0; i < len; i++) { const w = Math.random() * 2 - 1; last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
+  const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+  const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 400;
+  state.gOcean = AC.createGain(); state.gOcean.gain.value = 0.05;
+  src.connect(lp).connect(state.gOcean).connect(AC.destination); src.start();
+}
+function tone(freq, dur, gain = 0.07, type = 'sine', sweepTo = null) {
+  const AC = state.audioCtx; if (!AC) return;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, AC.currentTime);
+  if (sweepTo) o.frequency.exponentialRampToValueAtTime(sweepTo, AC.currentTime + dur);
+  g.gain.setValueAtTime(0.0001, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(gain, AC.currentTime + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
+  o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime + dur + 0.05);
+}
+function noiseBurst(dur, filterType, freq, gain = 0.06) {
+  const AC = state.audioCtx; if (!AC) return;
+  const len = AC.sampleRate * dur, buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const f = AC.createBiquadFilter(); f.type = filterType; f.frequency.value = freq;
+  const g = AC.createGain(); g.gain.value = gain;
+  src.connect(f).connect(g).connect(AC.destination); src.start();
+}
+const sGull    = () => tone(1150, 0.35, 0.05, 'sawtooth', 480);
+const sClink   = () => { noiseBurst(0.05, 'highpass', 3200, 0.07); tone(2300, 0.3, 0.05); };
+const sBell    = (f = 660) => tone(f, 0.8, 0.06);
+const sThump   = () => tone(85, 0.35, 0.1);
+const sWhistle = () => tone(700, 0.25, 0.05, 'sine', 990);
+const sRustle  = () => noiseBurst(0.22, 'bandpass', 1700, 0.05);
+function playChirp() { // tūī two-tone
+  tone(980, 0.12, 0.07); setTimeout(() => tone(1320, 0.1, 0.07), 120);
+}
+
+// ── scene helpers ────────────────────────────────────────────────────
+function lerpColor(muteHex, vividHex, k) {
+  return new THREE.Color(muteHex).lerp(new THREE.Color(vividHex), k);
+}
+function mesh(geom, pal, x, y, z) {
+  const mat = new THREE.MeshBasicMaterial({ color: pal.vivid });
+  const m = new THREE.Mesh(geom, mat);
+  m.position.set(x, y, z);
+  m.userData.colors = { mat, muted: pal.muted, vivid: pal.vivid };
+  scene.add(m);
+  return m;
+}
+function proxy(r, x, y, z) { // invisible raycast target
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 8), new THREE.MeshBasicMaterial({ visible: false }));
+  m.position.set(x, y, z); scene.add(m); return m;
+}
+function spiralLine(r, turns = 2.5) {
+  const pts = [];
+  for (let i = 0; i <= 64; i++) {
+    const a = (i / 64) * turns * Math.PI * 2, rr = r * i / 64;
+    pts.push(new THREE.Vector3(Math.cos(a) * rr, Math.sin(a) * rr, 0));
+  }
+  const mat = new THREE.LineBasicMaterial({ color: 0x3c3424, transparent: true, opacity: 0 });
+  return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+}
+function stickFigure() { // tiny carved stick figure, XY plane, ~0.35 tall
+  const pts = [];
+  const seg = (a, b) => pts.push(new THREE.Vector3(...a), new THREE.Vector3(...b));
+  seg([0, 0.05, 0], [0, 0.25, 0]);                         // body
+  seg([0, 0.05, 0], [-0.07, -0.08, 0]); seg([0, 0.05, 0], [0.07, -0.08, 0]); // legs
+  seg([0, 0.20, 0], [-0.10, 0.13, 0]); seg([0, 0.20, 0], [0.10, 0.13, 0]);  // arms
+  for (let i = 0; i < 8; i++) { // head octagon
+    const a1 = i / 8 * Math.PI * 2, a2 = (i + 1) / 8 * Math.PI * 2;
+    seg([Math.cos(a1) * 0.05, 0.30 + Math.sin(a1) * 0.05, 0], [Math.cos(a2) * 0.05, 0.30 + Math.sin(a2) * 0.05, 0]);
+  }
+  const mat = new THREE.LineBasicMaterial({ color: 0x2c2418, transparent: true, opacity: 0.9 });
+  return new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), mat);
+}
+
+// ── build the world ──────────────────────────────────────────────────
+function buildScene() {
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  dirLight.position.set(10, 15, 10); scene.add(dirLight);
+
+  const ground = mesh(new THREE.PlaneGeometry(120, 60), palette.sand, 0, 0, 0);
+  ground.rotation.x = -Math.PI / 2;
+  const road = mesh(new THREE.PlaneGeometry(120, 6), palette.road, 0, 0.02, 0);
+  road.rotation.x = -Math.PI / 2;
+  const sea = mesh(new THREE.PlaneGeometry(300, 300), palette.seaNear, 0, -0.3, 168); // near edge z=+18
+  sea.rotation.x = -Math.PI / 2;
+
+  // Buildings on the z=-8 side, doors facing the road
+  const buildingConfigs = [
+    { x: -18, pal: palette.bld1, key: 'dairy' },
+    { x: -2,  pal: palette.bld2, key: 'pub' },
+    { x: 14,  pal: palette.bld3, key: 'mara' },
+    { x: 28,  pal: palette.grey, key: null },
+  ];
+  const buildings = [];
+  buildingConfigs.forEach(cfg => {
+    const w = 8, h = 5, d = 7, z = -8, roofH = 2;
+    const body = mesh(new THREE.BoxGeometry(w, h, d), cfg.pal, cfg.x, h / 2, z);
+    body.userData.height = h; buildings.push(body);
+    const roof = mesh(new THREE.ConeGeometry(Math.hypot(w / 2, d / 2) * 1.05, roofH, 4), palette.roof, cfg.x, h + roofH / 2, z);
+    roof.rotation.y = Math.PI / 4;
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 0.12),
+      new THREE.MeshBasicMaterial({ color: 0x1c1c20 }));
+    door.position.set(cfg.x, 1.1, -4.46); scene.add(door);
+  });
+
+  // Flame tree + canopy + tūī (from F0)
+  const trunk = mesh(new THREE.CylinderGeometry(0.25, 0.25, 2.6, 8), palette.trunk, -26, 1.3, -5);
+  const canopy = [];
+  [{ x: -26.0, y: 3.2, z: -5.0, r: 1.2 }, { x: -26.9, y: 3.0, z: -4.6, r: 0.9 },
+   { x: -25.2, y: 3.1, z: -5.3, r: 1.0 }, { x: -26.0, y: 3.9, z: -4.9, r: 0.9 }].forEach(s => {
+    canopy.push(mesh(new THREE.SphereGeometry(s.r, 8, 8), palette.flame, s.x, s.y, s.z));
+  });
+  const TUI_BASE_Y = 3.7;
+  const tui = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), new THREE.MeshBasicMaterial({ color: 0x1a1a1a }));
+  tui.position.set(-25.0, TUI_BASE_Y, -4.4); tui.userData.hopAmount = 0; scene.add(tui);
+  const tuiProxy = proxy(0.6, -25.0, TUI_BASE_Y, -4.4);
+
+  // Bench at (2,0,8) facing the sea
+  const benchParts = [
+    mesh(new THREE.BoxGeometry(0.12, 0.42, 0.4), palette.trunk, 1.3, 0.21, 8),
+    mesh(new THREE.BoxGeometry(0.12, 0.42, 0.4), palette.trunk, 2.7, 0.21, 8),
+    mesh(new THREE.BoxGeometry(1.7, 0.07, 0.42), palette.trunk, 2, 0.45, 8),
+    mesh(new THREE.BoxGeometry(1.7, 0.35, 0.06), palette.trunk, 2, 0.78, 7.82),
+  ];
+
+  // Mara's bin beside the cottage door
+  const bin = new THREE.Group();
+  const binBody = mesh(new THREE.CylinderGeometry(0.32, 0.3, 0.75, 10), palette.bin, 0, 0.375, 0);
+  const binLid = mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.08, 10), palette.bin, 0, 0.79, 0);
+  scene.remove(binBody); scene.remove(binLid);
+  bin.add(binBody); bin.add(binLid);
+  bin.position.set(19, 0, -4.5); scene.add(bin);
+
+  // Three hidden spirals
+  const sp1 = spiralLine(0.35); sp1.rotation.x = -Math.PI / 2; sp1.position.set(6, 0.04, 13);
+  const sp2 = spiralLine(0.12); sp2.rotation.x = -Math.PI / 2; sp2.position.set(2.45, 0.5, 8);
+  const sp3 = spiralLine(0.18); sp3.position.set(-26, 1.2, -4.73); // trunk, facing the road (+z)
+  const spiralMeshes = [sp1, sp2, sp3];
+  spiralMeshes.forEach(s => scene.add(s));
+  const spiralProxies = [proxy(0.5, 6, 0.04, 13), proxy(0.25, 2.45, 0.5, 8), proxy(0.3, -26, 1.2, -4.73)];
+
+  // The hill at the -x end (low, flattened, walkable-over visually)
+  const hillMat = new THREE.MeshBasicMaterial({ color: palette.hill.vivid });
+  const hill = new THREE.Mesh(new THREE.SphereGeometry(25, 24, 12), hillMat);
+  hill.scale.set(1, 0.04, 1); hill.position.set(-55, 0, -8);
+  hill.userData.colors = { mat: hillMat, muted: palette.hill.muted, vivid: palette.hill.vivid };
+  scene.add(hill);
+
+  // Track strips up the hill (visible only when the reserve opens)
+  const track = [];
+  [[-42, 0.06, -2.5], [-45.5, 0.3, -4], [-48.5, 0.55, -5.5], [-51.5, 0.8, -7]].forEach(p => {
+    const s = mesh(new THREE.PlaneGeometry(5, 1.4), palette.sand, p[0], p[1], p[2]);
+    s.rotation.x = -Math.PI / 2; s.rotation.z = -0.4; s.visible = false; track.push(s);
+  });
+
+  // The tōtara at the track's end, carving on the trunk face toward the track
+  const totaraTrunk = mesh(new THREE.CylinderGeometry(0.5, 0.6, 5, 10), palette.trunk, -53, 3.4, -8);
+  const totaraCanopy = [
+    mesh(new THREE.SphereGeometry(2.6, 8, 8), palette.bush, -53, 7.0, -8),
+    mesh(new THREE.SphereGeometry(2.0, 8, 8), palette.bush, -54.6, 6.2, -7.2),
+    mesh(new THREE.SphereGeometry(2.1, 8, 8), palette.bush, -51.6, 6.4, -8.8),
+  ];
+  const carving = new THREE.Group();
+  const cSpiral = spiralLine(0.3); cSpiral.material.opacity = 0.9; cSpiral.material.color.set(0x2c2418);
+  cSpiral.position.set(0, 2.6, 0); carving.add(cSpiral);
+  const fig1 = stickFigure(); fig1.position.set(0, 1.85, -0.28); carving.add(fig1);
+  const fig2 = stickFigure(); fig2.position.set(0, 1.85, 0.28); carving.add(fig2);
+  carving.rotation.y = Math.PI / 2; // face +x, toward the approaching track
+  carving.position.set(-52.42, 0, -8); scene.add(carving);
+
+  // Two villagers, near the dairy and the pub
+  function villager(x, z, pal) {
+    const g = new THREE.Group();
+    const body = mesh(new THREE.BoxGeometry(0.45, 1.1, 0.3), pal, 0, 0.8, 0);
+    const head = mesh(new THREE.SphereGeometry(0.22, 8, 8), pal, 0, 1.48, 0);
+    const armGeom = new THREE.BoxGeometry(0.09, 0.55, 0.09);
+    armGeom.translate(0, -0.275, 0); // pivot at shoulder
+    const arm = mesh(armGeom, pal, 0.3, 1.32, 0);
+    [body, head, arm].forEach(m => { scene.remove(m); g.add(m); });
+    g.position.set(x, 0, z); scene.add(g);
+    const headProxy = proxy(0.35, x, 1.48, z);
+    return { group: g, arm, headProxy, waveT: 0 };
+  }
+  const npcs = [villager(-14, -4.2, palette.np), villager(2.5, -4.2, palette.np2)];
+
+  // The child: small dark figure, far end of the street
+  const childMat = new THREE.MeshBasicMaterial({ color: 0x242830, transparent: true, opacity: 0.85 });
+  const childG = new THREE.Group();
+  const cBody = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.62, 0.18), childMat);
+  cBody.position.y = 0.31;
+  const cHead = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), childMat);
+  cHead.position.y = 0.76;
+  childG.add(cBody); childG.add(cHead);
+  childG.visible = false; scene.add(childG);
+
+  return { ground, road, sea, tui, tuiProxy, buildings, canopy, TUI_BASE_Y,
+           benchParts, bin, spiralMeshes, spiralProxies, hill, track,
+           totaraTrunk, totaraCanopy, carving, npcs, childG, childMat };
+}
+const O = buildScene();
+
+// ── gulls (population follows openness) ──────────────────────────────
+const gullGeom = new THREE.SphereGeometry(0.28, 6, 5);
+function spawnGull() {
+  const mat = new THREE.MeshBasicMaterial({ color: palette.foam.vivid });
+  const m = new THREE.Mesh(gullGeom, mat);
+  m.scale.set(1.9, 0.55, 1);
+  m.userData.colors = { mat, muted: palette.foam.muted, vivid: palette.foam.vivid };
+  m.userData.gull = {
+    cx: -25 + Math.random() * 50, cz: 16 + Math.random() * 12,
+    r: 4 + Math.random() * 5, y: 15 + Math.random() * 10,
+    ang: Math.random() * 7, spd: (0.15 + Math.random() * 0.25) * (Math.random() < 0.5 ? -1 : 1),
+    flee: null,
+  };
+  scene.add(m); state.gulls.push(m);
+}
+function gullTick(dt) {
+  const want = Math.floor(open() * 7);
+  while (state.gulls.length < want) spawnGull();
+  while (state.gulls.length > want) scene.remove(state.gulls.pop());
+  for (const m of state.gulls) {
+    const g = m.userData.gull;
+    if (g.flee) {
+      m.position.addScaledVector(g.flee.v, dt);
+      g.flee.t -= dt;
+      if (g.flee.t <= 0) { g.cx = m.position.x; g.cz = m.position.z; g.y = m.position.y; g.flee = null; }
+    } else {
+      g.ang += g.spd * dt;
+      m.position.set(g.cx + Math.cos(g.ang) * g.r, g.y + Math.sin(state.t * 1.3 + g.r) * 0.6, g.cz + Math.sin(g.ang) * g.r);
+    }
+  }
+}
+function scareGull(m) {
+  const g = m.userData.gull;
+  if (g.flee) return;
+  const away = m.position.clone().sub(camera.position); away.y = 0; away.normalize();
+  away.multiplyScalar(14); away.y = 3;
+  g.flee = { v: away, t: 2.2 };
+  sGull();
+}
+
+// ── camera & input ───────────────────────────────────────────────────
+camera.position.set(10, 1.7, 3);
+camera.quaternion.setFromEuler(new THREE.Euler(0, Math.PI / 2, 0, 'YXZ'));
+
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+let pointerLocked = false;
+document.addEventListener('pointerlockchange', () => { pointerLocked = document.pointerLockElement === canvas; });
+canvas.addEventListener('click', e => {
+  if (!state.started) return;
+  if (e.isTrusted && !pointerLocked) { canvas.requestPointerLock(); return; }
+  clickAct();
+});
+
+const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+document.addEventListener('mousemove', e => {
+  if (!state.started) return;
+  if (e.isTrusted && !pointerLocked) return; // real mice need pointer lock; synthetic test events pass
+  euler.setFromQuaternion(camera.quaternion);
+  euler.y -= e.movementX * 0.005;
+  euler.x -= e.movementY * 0.005;
+  euler.x = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, euler.x));
+  camera.quaternion.setFromEuler(euler);
+});
+
+// ── interactables: E within 3.5m and roughly in view ────────────────
+const interactables = [
+  { key: 'dairy', label: 'the dairy',    pos: new THREE.Vector3(-18, 1.2, -4.5), act: () => doorAct('dairy') },
+  { key: 'pub',   label: 'the pub',      pos: new THREE.Vector3(-2, 1.2, -4.5),  act: () => doorAct('pub') },
+  { key: 'mara',  label: "Mara's place", pos: new THREE.Vector3(14, 1.2, -4.5),  act: () => doorAct('mara') },
+  { key: 'bench', label: 'sit a while',  pos: new THREE.Vector3(2, 0.6, 8),      act: startSit },
+  { key: 'bin',   label: '',             pos: new THREE.Vector3(19, 0.6, -4.5),  act: binAct },
+];
+function nearestInteractable() {
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  let best = null, bestD = 3.5;
+  for (const it of interactables) {
+    const to = it.pos.clone().sub(camera.position);
+    const d = Math.hypot(to.x, to.z);
+    if (d > 3.5) continue;
+    to.normalize();
+    if (fwd.dot(to) <= 0.6 && d > 1.2) continue; // must roughly face it (unless on top of it)
+    if (d < bestD || best === null) { best = it; bestD = d; }
+  }
+  return best;
+}
+function tryAct() {
+  if (state.mode !== 'walk') return;
+  const it = nearestInteractable();
+  if (it) it.act();
+}
+function doorAct(key) {
+  if (state.t < (state.doorCd[key] || 0)) return;
+  state.doorCd[key] = state.t + 8;
+  cap(LINES[key][reg()], 5.2);
+  const n = (state.talked[key] || 0) + 1; state.talked[key] = n;
+  soften(n <= 2 ? 0.035 : 0.015);
+}
+function binAct() {
+  sClink();
+  state.binWob = state.t;
+  state.binClinks++;
+  if (state.binClinks === 2 && open() > 0.35) cap("Heavier than one person's fortnight.", 3.5);
+}
+function startSit() {
+  state.mode = 'sit'; state.sitT = 3.5;
+  state.sitReturn = camera.position.clone();
+  camera.position.set(2, state.childHeight ? 0.8 : 1.2, 8);
+  camera.quaternion.setFromEuler(new THREE.Euler(0, Math.PI, 0, 'YXZ')); // face the sea
+  cap(LINES.sit[reg()], 4);
+}
+
+// ── spirals ──────────────────────────────────────────────────────────
+function findSpiral(i) {
+  const sp = state.spirals[i];
+  if (sp.found || open() <= 0.3) return;
+  sp.found = true;
+  const n = state.spirals.filter(s => s.found).length;
+  sBell([660, 770, 880][n - 1]);
+  if (n === 2) cap("…again?", 2.5);
+  if (n === 3) setTimeout(() => { sBell(660); sBell(880); setTimeout(() => sBell(1100), 300); }, 400);
+}
+
+// ── gaze: one raycast a frame over everything watchable ──────────────
+const raycaster = new THREE.Raycaster();
+let gazeId = null, gazeMs = 0;
+const gazeCd = {};
+function gazeTargets() {
+  const list = [
+    { obj: O.tuiProxy, id: 'tui', ms: 1000, maxD: 50, cd: 3, fire: () => {
+        playChirp(); O.tui.userData.hopAmount = 1; soften(0.04); } },
+    { obj: O.spiralProxies[0], id: 'sp0', ms: 800, maxD: 9, cd: 1, fire: () => findSpiral(0) },
+    { obj: O.spiralProxies[1], id: 'sp1', ms: 800, maxD: 9, cd: 1, fire: () => findSpiral(1) },
+    { obj: O.spiralProxies[2], id: 'sp2', ms: 800, maxD: 9, cd: 1, fire: () => findSpiral(2) },
+    { obj: O.npcs[0].headProxy, id: 'npc0', ms: 1000, maxD: 12, cd: 4, fire: () => npcGaze(0) },
+    { obj: O.npcs[1].headProxy, id: 'npc1', ms: 1000, maxD: 12, cd: 4, fire: () => npcGaze(1) },
+  ];
+  state.gulls.forEach((m, i) => list.push({ obj: m, id: 'gull' + i, ms: 500, maxD: 200, cd: 1, fire: () => scareGull(m) }));
+  return list;
+}
+function npcGaze(i) {
+  if (open() <= 0.35) return; // when armored: nothing. silence is the answer.
+  O.npcs[i].waveT = 1.6;
+  sWhistle();
+}
+function gazeTick(dt) {
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const targets = gazeTargets();
+  const hits = raycaster.intersectObjects(targets.map(t => t.obj), false);
+  let cur = null;
+  if (hits.length) {
+    const t = targets.find(t => t.obj === hits[0].object);
+    if (t && hits[0].distance <= t.maxD) cur = t;
+  }
+  if (!cur || cur.id !== gazeId) { gazeId = cur ? cur.id : null; gazeMs = 0; }
+  if (cur) {
+    gazeMs += dt * 1000;
+    if (gazeMs >= cur.ms && state.t >= (gazeCd[cur.id] || 0)) {
+      gazeCd[cur.id] = state.t + cur.cd;
+      cur.fire();
+      gazeMs = 0;
+    }
+  }
+}
+
+// ── click under the crosshair ────────────────────────────────────────
+function clickAct() {
+  if (state.mode !== 'walk') return;
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const clickables = [O.bin, ...O.spiralProxies, ...state.gulls];
+  if (state.child.on) clickables.push(O.childG);
+  const hits = raycaster.intersectObjects(clickables, true);
+  if (!hits.length) return;
+  let o = hits[0].object;
+  while (o.parent && o.parent !== scene) o = o.parent;
+  if (o === O.bin && hits[0].distance < 3.5) return binAct();
+  const spIdx = O.spiralProxies.indexOf(o);
+  if (spIdx >= 0 && hits[0].distance < 9) return findSpiral(spIdx);
+  if (state.gulls.includes(o)) return scareGull(o);
+  if (o === O.childG) return childVanish();
+}
+
+// ── the child at the edge of things ──────────────────────────────────
+function childVanish() {
+  if (!state.child.on) return;
+  state.child.on = false;
+  O.childG.visible = false;
+  state.child.nextAt = state.t + 30;
+  sThump();
+}
+function childTick(dt) {
+  const ch = state.child;
+  if (!ch.on && open() > 0.65 && state.mode === 'walk' && state.t > ch.nextAt) {
+    ch.on = true; ch.life = 6;
+    ch.x = camera.position.x > 0 ? -38 : 38; ch.z = 0;
+    O.childG.position.set(ch.x, 0, ch.z);
+    O.childG.visible = true;
+    O.childMat.opacity = 0.85;
+  }
+  if (ch.on) {
+    ch.life -= dt;
+    const d = Math.hypot(camera.position.x - ch.x, camera.position.z - ch.z);
+    if (d < 12) return childVanish();
+    if (ch.life <= 0) { ch.on = false; O.childG.visible = false; ch.nextAt = state.t + 30; return; }
+    O.childMat.opacity = Math.min(1, ch.life) * 0.85;
+  }
+}
+
+// ── the phone call ───────────────────────────────────────────────────
+function phoneTick() {
+  if (state.phoneDone || state.t < 90 || state.mode !== 'walk') return;
+  state.phoneDone = true;
+  const felt = wound(0.16);
+  cap("Your phone. Mum. Dad's had a turn — overnight, for tests.", 5);
+  cap(felt < 0.08 ? "It lands offshore, like weather."
+    : felt < 0.12 ? "Your chest does something complicated."
+    : "Cold water, all the way through.", 5);
+}
+
+// ── main loop ────────────────────────────────────────────────────────
+let lastTime = performance.now();
+const movementVector = new THREE.Vector3();
+let eLatch = false;
+
+function updateScene() {
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  if (!state.started) return;
+  state.t += dt;
+
+  const ro = reserveOpen();
+  O.track.forEach(s => { s.visible = ro; });
+  const minX = ro ? -58 : -40;
+
+  if (state.mode === 'walk') {
+    const speed = 4;
+    movementVector.set(0, 0, 0);
+    if (keys['w']) movementVector.z -= 1;
+    if (keys['s']) movementVector.z += 1;
+    if (keys['a']) movementVector.x -= 1;
+    if (keys['d']) movementVector.x += 1;
+    if (movementVector.lengthSq() > 0) {
+      movementVector.normalize().multiplyScalar(speed * dt);
+      const yaw = new THREE.Euler(0, 0, 0, 'YXZ');
+      yaw.setFromQuaternion(camera.quaternion);
+      const fwd = new THREE.Vector3(-Math.sin(yaw.y), 0, -Math.cos(yaw.y));
+      const right = new THREE.Vector3(Math.cos(yaw.y), 0, -Math.sin(yaw.y));
+      camera.position.addScaledVector(fwd, -movementVector.z);
+      camera.position.addScaledVector(right, movementVector.x);
+    }
+    camera.position.x = Math.max(minX, Math.min(40, camera.position.x));
+    camera.position.z = Math.max(-14, Math.min(16, camera.position.z));
+    camera.position.y = state.childHeight ? 1.1 : 1.7;
+
+    if (keys['e'] && !eLatch) { eLatch = true; tryAct(); }
+    if (!keys['e']) eLatch = false;
+
+    const it = nearestInteractable();
+    hintEl.textContent = (it && it.label) ? `[E] ${it.label}`
+      : 'WASD move · mouse look · C child height · E interact';
+  } else if (state.mode === 'sit') {
+    camera.position.y = state.childHeight ? 0.8 : 1.2;
+    state.sitT -= dt;
+    hintEl.textContent = '';
+    if (state.sitT <= 0) {
+      soften(0.05);
+      state.mode = 'walk';
+      if (state.sitReturn) camera.position.copy(state.sitReturn);
+    }
+  }
+
+  // Child height toggle
+  if (keys['c'] && !state.childHeightLatch) { state.childHeightLatch = true; state.childHeight = !state.childHeight; }
+  if (!keys['c']) state.childHeightLatch = false;
+
+  gazeTick(dt);
+  gullTick(dt);
+  childTick(dt);
+  phoneTick();
+  capTick(dt);
+
+  // Carving encounter at the tōtara
+  if (ro && !state.carvingDone &&
+      Math.hypot(camera.position.x + 53, camera.position.z + 8) < 4) {
+    state.carvingDone = true;
+    cap("The track climbs to the big tōtara.", 3);
+    cap("A spiral. Two stick figures, holding hands.", 4.5);
+    cap("“WE PROMISED.”", 4.5);
+    cap("You've walked past this track a thousand times.", 5);
+    soften(0.05);
+  }
+
+  // Tūī hop
+  if (O.tui.userData.hopAmount > 0) {
+    O.tui.userData.hopAmount -= dt * 2;
+    O.tui.position.y = O.TUI_BASE_Y + Math.sin(Math.max(0, O.tui.userData.hopAmount) * Math.PI) * 0.35;
+  }
+
+  // Bin wobble
+  const wob = Math.max(0, 0.5 - (state.t - state.binWob));
+  O.bin.rotation.z = wob * Math.sin((state.t - state.binWob) * 28) * 0.18;
+
+  // NPC arms
+  for (const n of O.npcs) {
+    if (n.waveT > 0) {
+      n.waveT -= dt;
+      n.arm.rotation.z = 2.4 + Math.sin(now / 90) * 0.15;
+    } else n.arm.rotation.z = 0;
+  }
+
+  // Spiral visibility by openness (found = gold, stays)
+  const o = open();
+  O.spiralMeshes.forEach((m, i) => {
+    if (state.spirals[i].found) { m.material.color.set(0xc49628); m.material.opacity = 0.9; }
+    else { m.material.color.set(0x3c3424); m.material.opacity = o > 0.3 ? 0.15 + 0.3 * o : 0; }
+  });
+
+  // Perception lerp: colors, sky, fog, vignette, audio
+  scene.traverse(obj => {
+    if (obj.userData.colors) {
+      obj.userData.colors.mat.color.copy(lerpColor(obj.userData.colors.muted, obj.userData.colors.vivid, o));
+    }
+  });
+  const skyTop = lerpColor(palette.skyTop.muted, palette.skyTop.vivid, o);
+  scene.background = skyTop;
+  scene.fog = new THREE.Fog(skyTop, 10 + 50 * (1 - state.guard), 80);
+  vignetteEl.style.opacity = 0.15 + state.guard * 0.55;
+  if (state.gOcean) state.gOcean.gain.value = 0.02 + 0.10 * o;
+
+  renderer.render(scene, camera);
+}
+
+// ── start ────────────────────────────────────────────────────────────
+startEl.addEventListener('click', () => {
+  state.started = true;
+  startEl.style.display = 'none';
+  try { initAudio(); } catch (err) {}
+  canvas.requestPointerLock();
+  lastTime = performance.now();
+  cap("An ordinary morning.", 3);
+  cap("Everything can be touched.", 3.5);
+});
+
+function animate() { updateScene(); requestAnimationFrame(animate); }
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+animate();
+
+// ── test hook (not part of the game) ─────────────────────────────────
+window.__fpp = {
+  get guard() { return state.guard; },
+  set guard(v) { state.guard = Math.max(0.06, Math.min(1, v)); },
+  state: state,
+  camera: camera,
+  objects: O,
+  get spiralsFound() { return state.spirals.filter(s => s.found).length; },
+  get reserveOpen() { return reserveOpen(); },
+  get captionText() { return +capEl.style.opacity > 0 ? capEl.textContent : ''; },
+  get gullCount() { return state.gulls.length; },
+};
+</script>
+</body>
+</html>

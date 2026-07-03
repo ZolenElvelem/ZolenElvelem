@@ -1,0 +1,965 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Kōtuku Bay — a moving sketch (Phase 1 preview)</title>
+<style>
+  html,body { margin:0; padding:0; background:#111; overflow:hidden; height:100%; }
+  #c { display:block; width:100vw; height:100vh; touch-action:none; }
+  #cap {
+    position:fixed; left:50%; bottom:12vh; transform:translateX(-50%);
+    max-width:34em; padding:.6em 1.1em; text-align:center;
+    font:italic 17px Georgia, serif; color:#f5efdf;
+    background:rgba(20,20,20,.55); border-radius:6px;
+    opacity:0; transition:opacity .6s ease; pointer-events:none;
+  }
+  #hint {
+    position:fixed; left:50%; top:2.2vh; transform:translateX(-50%);
+    font:13px Georgia, serif; color:rgba(245,239,223,.55);
+    letter-spacing:.05em; pointer-events:none; text-align:center;
+  }
+  #start {
+    position:fixed; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:1.2em;
+    background:#14140f; color:#e8e0c9; font:19px Georgia, serif;
+    text-align:center; padding:2em; cursor:pointer;
+  }
+  #start small { opacity:.6; font-size:14px; max-width:32em; line-height:1.6; }
+  #start .go { border:1px solid #8a7c5f; padding:.6em 2.2em; border-radius:4px; }
+  .touchbtn {
+    position:fixed; bottom:3vh; width:64px; height:64px; border-radius:50%;
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.25);
+    color:rgba(255,255,255,.7); font:26px Georgia, serif;
+    display:flex; align-items:center; justify-content:center;
+    user-select:none; -webkit-user-select:none;
+  }
+  #tL{left:4vw} #tR{left:calc(4vw + 76px)} #tE{right:4vw; font-size:20px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="cap"></div>
+<div id="hint"></div>
+<div id="start">
+  <div>KŌTUKU BAY</div>
+  <small>A moving sketch of the perception mechanic — procedural art and sound,
+  deliberately unfinished. Walk the bay. Do what feels good. Watch what the
+  world does. Nothing is explained and nothing is scored.</small>
+  <div class="go">begin</div>
+  <small>← → or A D to walk &nbsp;·&nbsp; E or tap circle to act &nbsp;·&nbsp; headphones help</small>
+</div>
+<div class="touchbtn" id="tL" style="display:none">◀</div>
+<div class="touchbtn" id="tR" style="display:none">▶</div>
+<div class="touchbtn" id="tE" style="display:none">act</div>
+
+<script>
+"use strict";
+// ═══════════════════════════════════════════════════════════════════
+// Kōtuku Bay — Phase 1 preview sketch.
+// One value drives everything: guard (0 open … 1 armored).
+// open = 1-guard lerps every palette colour, gain and spawn count.
+// Nothing is ever shown as a number.
+// ═══════════════════════════════════════════════════════════════════
+
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", resize); resize();
+
+// ── state ────────────────────────────────────────────────────────────
+const WORLD_W = 3400;
+const S = {
+  guard: 0.78,
+  x: 1500, vx: 0, face: 1,
+  mode: "walk",           // walk | surf | sit | end
+  t: 0, camX: 0,
+  phoneDone: false, carvingDone: false,
+  benchUsed: 0, talked: {},
+  surf: null,
+  caps: [], capUntil: 0,
+  birds: [],                                   // living gull objects
+  tui: { state: "tree", ft: 0 },               // tree | fly | away
+  npcs: [], npcReact: {},                      // screen positions + wave timers
+  spirals: [
+    { x: 560,  dy: 44,  r: 14, found: false }, // in the sand near the surf
+    { x: 1210, dy: 6,   r: 8,  found: false }, // scratched on the bench
+    { x: 2965, dy: -46, r: 12, found: false }, // on a trunk at the hill's foot
+  ],
+  child: { on: false, x: 0, life: 0, nextAt: 18, seen: 0 },
+  petals: [], ripples: [],
+};
+const open = () => 1 - S.guard;
+const soften = a => { S.guard = Math.max(0.06, S.guard - a); };
+const wound  = b => { const f = b * (1 - 0.6 * S.guard); S.guard = Math.min(0.95, S.guard + f); return f; };
+
+// ── captions ─────────────────────────────────────────────────────────
+const capEl = document.getElementById("cap");
+function cap(text, secs = 4.2) { S.caps.push([text, secs]); }
+function capTick(dt) {
+  if (S.capUntil > 0) { S.capUntil -= dt; if (S.capUntil <= 0) capEl.style.opacity = 0; return; }
+  if (S.caps.length && S.capUntil <= -0.4) {
+    const [t, secs] = S.caps.shift();
+    capEl.textContent = t; capEl.style.opacity = 1; S.capUntil = secs;
+  } else S.capUntil -= dt;
+}
+
+// ── palette: every colour is [muted, vivid] lerped by open ───────────
+function hx(h){ return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; }
+function col(mut, viv, k = open()) {
+  const a = hx(mut), b = hx(viv);
+  const r = a.map((v,i) => Math.round(v + (b[i]-v) * k));
+  return `rgb(${r[0]},${r[1]},${r[2]})`;
+}
+const P = {
+  skyTop:    ["#5a5e60", "#7fc4e8"], skyBot: ["#8b8d8a", "#ffe9c4"],
+  seaFar:    ["#57605f", "#1f7f9c"], seaNear:["#4a5251", "#2ea3b5"],
+  foam:      ["#9aA0a0", "#eafcff"], sand:   ["#8f8a7c", "#e8d5a2"],
+  road:      ["#6b6b66", "#9a938a"], hill:   ["#5d635c", "#4d8f4f"],
+  bush:      ["#565c55", "#2f7a3c"], trunk:  ["#6a655c", "#7a5c3a"],
+  bld1:      ["#75726b", "#d8b46a"], bld2:   ["#6d6f6e", "#b0cf9a"],
+  bld3:      ["#7a746e", "#e0937c"], roof:   ["#5c5a55", "#8a4b3a"],
+  sign:      ["#8a877e", "#f2e3b8"], np:     ["#5f5f5c", "#c46a4a"],
+  np2:       ["#61615e", "#4a7ac4"], flame:  ["#6a6258", "#d4452a"],
+  glare:     ["#8d8d88", "#fff3c8"],
+};
+
+// ── audio (all synthesized) ──────────────────────────────────────────
+let AC = null, gOcean, gBirds, gPad;
+function audioInit() {
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  // ocean: looped filtered noise
+  const len = AC.sampleRate * 2, buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0); let last = 0;
+  for (let i = 0; i < len; i++) { const w = Math.random()*2-1; last = (last + 0.02*w)/1.02; d[i] = last*3.5; }
+  const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+  const lp = AC.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 400;
+  gOcean = AC.createGain(); gOcean.gain.value = 0.05;
+  src.connect(lp).connect(gOcean).connect(AC.destination); src.start();
+  gBirds = AC.createGain(); gBirds.gain.value = 0; gBirds.connect(AC.destination);
+  // pad: two soft detuned sines, only audible when open
+  gPad = AC.createGain(); gPad.gain.value = 0; gPad.connect(AC.destination);
+  [174, 261.8].forEach(f => {
+    const o = AC.createOscillator(); o.frequency.value = f; o.type = "sine";
+    const g = AC.createGain(); g.gain.value = 0.35;
+    o.connect(g).connect(gPad); o.start();
+  });
+}
+function chirp() {
+  if (!AC) return;
+  const o = AC.createOscillator(), g = AC.createGain();
+  const f0 = 1400 + Math.random()*1200;
+  o.frequency.setValueAtTime(f0, AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(f0*(1.3+Math.random()*0.6), AC.currentTime+0.12);
+  g.gain.setValueAtTime(0.0001, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.12, AC.currentTime+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime+0.25);
+  o.connect(g).connect(gBirds); o.start(); o.stop(AC.currentTime+0.3);
+}
+// one-shot sound effects (all synthesized, all quiet)
+function tone(freq, dur, gain = 0.07, type = "sine", sweepTo = null) {
+  if (!AC) return;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, AC.currentTime);
+  if (sweepTo) o.frequency.exponentialRampToValueAtTime(sweepTo, AC.currentTime + dur);
+  g.gain.setValueAtTime(0.0001, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(gain, AC.currentTime + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
+  o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime + dur + 0.05);
+}
+function noiseBurst(dur, filterType, freq, gain = 0.06) {
+  if (!AC) return;
+  const len = AC.sampleRate * dur, buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random()*2-1) * (1 - i/len);
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const f = AC.createBiquadFilter(); f.type = filterType; f.frequency.value = freq;
+  const g = AC.createGain(); g.gain.value = gain;
+  src.connect(f).connect(g).connect(AC.destination); src.start();
+}
+const sGull    = () => tone(1150, 0.35, 0.05, "sawtooth", 480);
+const sSwoosh  = () => noiseBurst(0.4, "bandpass", 1200, 0.08);
+const sSnap    = () => { noiseBurst(0.25, "highpass", 2200, 0.09); tone(880, 0.35, 0.06); };
+const sTumble  = () => noiseBurst(0.8, "lowpass", 500, 0.12);
+const sTui     = () => { tone(980, 0.12, 0.08); setTimeout(() => noiseBurst(0.04, "highpass", 4000, 0.05), 130); setTimeout(() => tone(1320, 0.1, 0.07), 200); };
+const sClink   = () => { noiseBurst(0.05, "highpass", 3200, 0.07); tone(2300, 0.3, 0.05); };
+const sBell    = (f = 660) => tone(f, 0.8, 0.06);
+const sSplash  = () => noiseBurst(0.28, "lowpass", 850, 0.07);
+const sRustle  = () => noiseBurst(0.22, "bandpass", 1700, 0.05);
+const sWhistle = () => tone(700, 0.25, 0.05, "sine", 990);
+const sThump   = () => tone(85, 0.35, 0.1);
+
+let chirpAt = 0;
+function audioTick(dt) {
+  if (!AC) return;
+  const beachNear = Math.max(0, 1 - Math.abs(S.x - 700)/1400);
+  const riding = S.mode === "surf" && S.surf && S.surf.phase === "ride";
+  gOcean.gain.value = riding ? 0.10 + 0.06*S.surf.spd + (S.surf.gap < 0.25 ? (0.25-S.surf.gap)*0.5 : 0)
+                             : 0.02 + 0.10*beachNear + 0.05*open();
+  gBirds.gain.value = Math.max(0, open()-0.25) * 0.9;
+  gPad.gain.value   = Math.max(0, open()-0.55) * 0.05;
+  chirpAt -= dt;
+  if (chirpAt <= 0) { if (open() > 0.3 && Math.random() < open()) chirp(); chirpAt = 0.7 + Math.random()*2.2; }
+}
+
+// ── input ────────────────────────────────────────────────────────────
+const keys = {};
+window.addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; if (e.key===" ") keys.space = true; });
+window.addEventListener("keyup",   e => { keys[e.key.toLowerCase()] = false; if (e.key===" ") keys.space = false; });
+const isTouch = "ontouchstart" in window;
+for (const [id, k] of [["tL","arrowleft"],["tR","arrowright"],["tE","e"]]) {
+  const el = document.getElementById(id);
+  el.addEventListener("touchstart", e => { e.preventDefault(); keys[k] = true;  }, {passive:false});
+  el.addEventListener("touchend",   e => { e.preventDefault(); keys[k] = false; }, {passive:false});
+}
+
+// ── pointer: touch the world, the world answers ──────────────────────
+cv.addEventListener("pointerdown", e => {
+  if (S.mode === "end") return;
+  const sx = e.clientX, sy = e.clientY;               // screen coords
+  const wx = sx + S.camX;                             // world x
+  const horizon = H*0.42, ground = H*0.78;
+  // the child: gone the moment you reach for it
+  if (S.child.on && Math.abs(sx - (S.child.x - S.camX)) < 60 && sy > ground-90 && sy < ground+40) {
+    S.child.on = false; S.child.nextAt = S.t + 22 + Math.random()*18; sThump(); return;
+  }
+  // the tūī, if it's on the tree
+  const tx = TREE_X - S.camX;
+  if (S.tui.state === "tree" && open() > 0.35 &&
+      Math.abs(sx - (tx+14)) < 36 && Math.abs(sy - (ground-66)) < 44) {
+    S.tui.state = "fly"; S.tui.ft = 0; sTui(); return;
+  }
+  // gulls scatter
+  for (const b of S.birds) {
+    if (Math.abs(sx - b.sx) < 30 && Math.abs(sy - b.sy) < 26) {
+      b.scare = 1.6; b.vy = -70 - Math.random()*50; b.vx *= 2.2; sGull(); return;
+    }
+  }
+  // people: reaching out only lands when you're open
+  for (let i = 0; i < S.npcs.length; i++) {
+    const n = S.npcs[i];
+    if (Math.abs(sx - n.x) < 26 && Math.abs(sy - n.y + 25) < 45) {
+      if (open() > 0.35) { S.npcReact[n.id] = S.t; sWhistle(); }
+      return; // when armored: nothing. silence is the answer.
+    }
+  }
+  // Mara's bin — the whole thread in one sound
+  if (Math.abs(wx - (PL.mara.x + 78)) < 26 && sy > ground-40 && sy < ground+38) {
+    sClink(); S.binWob = S.t; S.binClinks = (S.binClinks||0) + 1;
+    if (S.binClinks === 2 && open() > 0.35) cap("Heavier than one person's fortnight.", 3.5);
+    return;
+  }
+  // the spirals
+  for (const sp of S.spirals) {
+    if (!sp.found && Math.abs(wx - sp.x) < 26 && Math.abs(sy - (ground + sp.dy)) < 26 && open() > 0.3) {
+      sp.found = true; sBell(660 + S.spirals.filter(z=>z.found).length * 110);
+      const n = S.spirals.filter(z => z.found).length;
+      if (n === 2) cap("…again?", 2.5);
+      if (n === 3) { setTimeout(() => { sBell(660); sBell(880); setTimeout(()=>sBell(1100),300); }, 400); }
+      return;
+    }
+  }
+  // the flame tree sheds
+  if (Math.abs(wx - TREE_X) < 60 && sy > ground-150 && sy < ground-40) {
+    sRustle();
+    for (let i = 0; i < 9; i++)
+      S.petals.push({ x: TREE_X + (Math.random()*70-35), y: ground-110+Math.random()*30,
+                      vx: Math.random()*24-12, vy: 12+Math.random()*22, life: 2.5+Math.random() });
+    return;
+  }
+  // the sea
+  if (sy > horizon && sy < ground) {
+    sSplash(); S.ripples.push({ x: wx, y: sy, r: 4, life: 1 });
+    return;
+  }
+});
+
+// ── places ───────────────────────────────────────────────────────────
+const PL = {
+  surfZone:  { x: 430,  w: 260, label: "paddle out" },
+  bench:     { x: 1180, w: 90,  label: "sit a while" },
+  dairy:     { x: 1550, w: 120, label: "the dairy" },
+  pub:       { x: 1980, w: 140, label: "the pub" },
+  mara:      { x: 2450, w: 120, label: "Mara's place" },
+  reserve:   { x: 3060, w: 140, label: "the track" }, // only visible when open
+};
+function near(p) { return Math.abs(S.x - p.x) < p.w; }
+const TREE_X = PL.dairy.x - 260;
+const trackOpen = () => open() > 0.6 || S.spirals.every(sp => sp.found);
+
+// ── dialogue (three registers, chosen by open()) ─────────────────────
+function reg() { return open() < 0.35 ? 0 : open() < 0.65 ? 1 : 2; }
+const LINES = {
+  dairy: [
+    "Mrs Hema counts your change. \"Cold out.\"",
+    "\"Pies are back Thursday.\" Almost a smile.",
+    "She's singing to the pie warmer. \"You've got some colour back.\"",
+  ],
+  pub: [
+    "Rewi nods. You nod. The replay flickers.",
+    "\"Swell's building. Get out while it's clean.\"",
+    "\"This town tells you everything — if you're the right speed to hear it.\"",
+  ],
+  mara: [
+    "The door opens body-width. Rugby. Roof. Weather.",
+    "Twice she starts a sentence and lets it go.",
+    "Her kitchen is very, very clean. The bin outside is not light.",
+  ],
+};
+
+// ── interactions ─────────────────────────────────────────────────────
+let eLatch = false;
+function tryAct() {
+  if (S.mode !== "walk") return;
+  if (near(PL.surfZone)) { startSurf(); return; }
+  if (near(PL.bench)) {
+    S.mode = "sit"; S.sitT = 3.2;
+    cap(["The sea does what the sea does.",
+         "Sixty years of initials. Yours are here somewhere.",
+         "Seventeen, terrified, kissed first — right here."][reg()], 4);
+    return;
+  }
+  for (const key of ["dairy","pub","mara"]) {
+    if (near(PL[key])) {
+      cap(LINES[key][reg()], 5.2);
+      const n = (S.talked[key] || 0) + 1; S.talked[key] = n;
+      soften(n <= 2 ? 0.035 : 0.015);
+      return;
+    }
+  }
+  if (near(PL.reserve) && trackOpen() && !S.carvingDone) {
+    S.carvingDone = true;
+    cap("The track climbs to the big tōtara.", 3);
+    cap("A spiral. Two stick figures, holding hands.", 4.5);
+    cap("“WE PROMISED.”", 4.5);
+    cap("You've walked past this track a thousand times.", 5);
+    soften(0.05);
+    setTimeout(endCard, 19000);
+  }
+}
+function endCard() {
+  if (S.mode === "end") return;
+  S.mode = "end";
+  cap("Ninety seconds of Phase 1. The real game is ten years — and the town remembers.", 8);
+  cap("(Refresh to live it differently.)", 8);
+}
+
+// ── surf toy (v2: the pocket, the curl, the lip) ─────────────────────
+function startSurf() {
+  S.mode = "surf";
+  S.surf = {
+    phase: "wait", waveX: -600, rides: 0, eReleased: false,
+    h: 0.45, spd: 1.0, gap: 0.4, rideT: 0, waveLen: 0,
+    snaps: 0, snapCd: 0, lipT: 0, dist: 0,
+    trail: [], spray: [], tumbleT: 0,
+  };
+  cap(["A chore you happen to love.",
+       "The water takes your weight like it remembers you.",
+       "The water is lit from inside."][reg()], 3);
+  cap("E as it lifts you. Then: carve ↑ ↓, snap with E off the top.", 4);
+}
+function endRide(s, cause) {
+  s.rides++;
+  const earned = Math.min(0.022 * s.rideT + 0.014 * s.snaps, 0.1);
+  soften(earned);
+  if (cause === "curl")  { cap("The whitewater takes you. The sea shrugs.", 2.5); }
+  if (cause === "lip")   { cap("Over the falls.", 2); }
+  if (cause === "close") {
+    cap(s.snaps >= 3 ? "The bay noticed that one."
+        : s.rideT > 7 ? ["Something unclenches a finger.", "Shoulders down an inch.", "Fourteen again — the only good way."][reg()]
+        : "Clean.", 2.5);
+  }
+  if (s.rides >= 3) {
+    setTimeout(() => { if (S.mode === "surf") { S.mode = "walk"; S.surf = null; cap("Salt in your eyebrows.", 2.5); } }, 1400);
+  } else {
+    s.phase = "between"; s.bt = 1.6;
+  }
+}
+function surfTick(dt) {
+  const s = S.surf;
+  if (!keys.e) s.eReleased = true;
+
+  if (s.phase === "wait") {
+    s.waveX += dt * 260;
+    if (s.waveX > -40 && s.waveX < 60) {
+      if (!s.cued) { s.cued = true; sSwoosh(); }   // the lift: your moment
+      if (keys.e || keys.space) {
+        s.phase = "ride"; keys.e = false; sSwoosh();
+        s.h = 0.55; s.spd = 1.15; s.gap = 0.4; s.rideT = 0;
+        s.snaps = 0; s.lipT = 0; s.dist = 0; s.trail = [];
+        s.waveLen = 8 + Math.random()*3 + open()*2;
+        if (!S.rodeOnce) { S.rodeOnce = true; cap("Stay ahead of the foam.", 3); }
+      }
+    } else if (s.waveX >= 60) {
+      s.phase = "missed"; s.mt = 1.2; s.cued = false;
+      cap(["Missed. The sea doesn't care.", "Missed. The next one's gathering.", "Missed it, laughing."][reg()], 2);
+    }
+    if (keys.e && s.eReleased && s.waveX < -120) { // paddle in early
+      S.mode = "walk"; S.surf = null; keys.e = false;
+      cap("You wade in. The bay carries on without you.", 3);
+    }
+  } else if (s.phase === "missed") {
+    s.mt -= dt; if (s.mt <= 0) { s.waveX = -600 - Math.random()*200; s.phase = "wait"; }
+  } else if (s.phase === "between") {
+    s.bt -= dt; if (s.bt <= 0) { s.waveX = -650 - Math.random()*250; s.phase = "wait"; }
+  } else if (s.phase === "ride") {
+    s.rideT += dt; s.snapCd -= dt;
+    const up   = keys.arrowup   || keys.w || keys.arrowright || keys.d;
+    const down = keys.arrowdown || keys.s || keys.arrowleft  || keys.a;
+    const h0 = s.h;
+    if (up)   s.h += 0.95 * dt;
+    if (down) s.h -= 0.95 * dt;
+    s.h -= 0.10 * dt;                       // gravity always wins slowly
+    s.h = Math.max(0, Math.min(1, s.h));
+    const dh = s.h - h0;
+    if (dh < 0) s.spd += (-dh) * 3.4;       // dropping down the face = speed
+    if (dh > 0) s.spd -= dh * 1.5;          // climbing costs, but not everything
+    s.spd += (1.0 - s.spd) * 0.4 * dt;      // the wave sets the tempo
+    if (s.gap > 1.0) s.spd -= 0.5 * dt;     // no push out on the shoulder
+    s.spd = Math.max(0.5, Math.min(2.4, s.spd));
+    s.gap += (s.spd - 1.0) * 0.22 * dt;
+    s.gap = Math.min(1.15, s.gap);
+    s.dist += s.spd * dt;
+    // the lip: linger too long up top and it takes you
+    if (s.h > 0.92) { s.lipT += dt; if (s.lipT > 0.6) { s.phase = "tumble"; s.tumbleT = 1.6; sTumble(); endRide(s, "lip"); return; } }
+    else s.lipT = 0;
+    // snap off the top
+    if (keys.e && s.eReleased && s.snapCd <= 0 && s.h > 0.62) {
+      keys.e = false; s.eReleased = false; s.snapCd = 0.6;
+      s.snaps++; s.h -= 0.25; s.spd += 0.45; sSnap();  // the turn projects you down the line
+      for (let i = 0; i < 22; i++)
+        s.spray.push({ x: 0, y: 0, vx: -40-Math.random()*120, vy: -60-Math.random()*90, life: 0.6+Math.random()*0.5, big: true });
+    }
+    // the curl catches you
+    if (s.gap <= 0.02) { s.phase = "tumble"; s.tumbleT = 1.6; sTumble(); endRide(s, "curl"); return; }
+    // the wave closes out
+    if (s.rideT > s.waveLen) { s.phase = "tumble"; s.tumbleT = 1.0; sSwoosh(); endRide(s, "close"); return; }
+    // steady spray at speed
+    if (s.spd > 1.3 && Math.random() < (s.spd-1.2))
+      s.spray.push({ x: 0, y: 0, vx: -30-Math.random()*60, vy: -10-Math.random()*40, life: 0.4+Math.random()*0.3 });
+  } else if (s.phase === "tumble") {
+    s.tumbleT -= dt;
+    if (s.tumbleT <= 0 && s.phase === "tumble") s.phase = "between", s.bt = 0.8;
+  }
+  for (const p of s.spray) { p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 160*dt; p.life -= dt; }
+  s.spray = s.spray.filter(p => p.life > 0);
+}
+
+// ── scripted beat: the phone call ────────────────────────────────────
+function maybePhone() {
+  if (S.phoneDone || S.t < 75 || S.mode !== "walk") return;
+  S.phoneDone = true;
+  const felt = wound(0.16);
+  cap("Your phone. Mum. Dad's had a turn — overnight, for tests.", 5);
+  cap(felt < 0.08
+      ? "It lands offshore, like weather."
+      : felt < 0.12
+      ? "Your chest does something complicated."
+      : "Cold water, all the way through.", 5);
+}
+
+// ── drawing ──────────────────────────────────────────────────────────
+function draw(t) {
+  if (S.mode === "surf" && (S.surf.phase === "ride" || S.surf.phase === "tumble")) { drawRide(t); return; }
+  const o = open();
+  const horizon = H*0.42, ground = H*0.78;
+  const camX = Math.max(0, Math.min(S.x - W/2, WORLD_W - W));
+  S.camX = camX;
+  // sky
+  const sky = ctx.createLinearGradient(0,0,0,horizon*1.2);
+  sky.addColorStop(0, col(...P.skyTop)); sky.addColorStop(1, col(...P.skyBot));
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,horizon+2);
+  // sun glare (clear only)
+  if (o > 0.45) {
+    const gl = ctx.createRadialGradient(W*0.28, horizon*0.5, 10, W*0.28, horizon*0.5, 260);
+    gl.addColorStop(0, col(...P.glare)); gl.addColorStop(1, "rgba(255,243,200,0)");
+    ctx.globalAlpha = (o-0.45)*1.4; ctx.fillStyle = gl;
+    ctx.fillRect(0,0,W,horizon); ctx.globalAlpha = 1;
+  }
+  // sea
+  const sea = ctx.createLinearGradient(0,horizon,0,ground);
+  sea.addColorStop(0, col(...P.seaFar)); sea.addColorStop(1, col(...P.seaNear));
+  ctx.fillStyle = sea; ctx.fillRect(0,horizon,W,ground-horizon);
+  // wave lines
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 1.5;
+  for (let i=0;i<5;i++) {
+    const y = horizon + (ground-horizon)*(0.25+0.17*i);
+    ctx.globalAlpha = 0.25 + 0.4*o;
+    ctx.beginPath();
+    for (let x=0;x<=W;x+=14)
+      ctx.lineTo(x, y + Math.sin((x+camX)*0.012 + t*(0.9+i*0.15))*3.2*(1+o));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // beach / road
+  ctx.fillStyle = col(...P.sand);
+  ctx.beginPath(); ctx.moveTo(0,ground);
+  for (let x=0;x<=W;x+=22) ctx.lineTo(x, ground + Math.sin((x+camX)*0.01)*4);
+  ctx.lineTo(W,H); ctx.lineTo(0,H); ctx.fill();
+  ctx.fillStyle = col(...P.road); ctx.fillRect(0, ground+28, W, 26);
+  // hill + reserve (right end)
+  const hx0 = 2850 - camX;
+  ctx.fillStyle = col(...P.hill);
+  ctx.beginPath(); ctx.moveTo(hx0, ground+30);
+  ctx.quadraticCurveTo(hx0+320, ground-320, hx0+760, ground+30); ctx.fill();
+  for (let i=0;i<7;i++) { // bush blobs
+    ctx.fillStyle = col(...P.bush);
+    ctx.beginPath();
+    ctx.ellipse(hx0+140+i*72, ground-30-((i*37)%110), 46, 30, 0, 0, 7); ctx.fill();
+  }
+  if (trackOpen()) { // the track & sign — literally not rendered when guarded
+    ctx.strokeStyle = col(...P.sand); ctx.lineWidth = 7;
+    ctx.globalAlpha = o > 0.6 ? Math.min(1,(o-0.6)*4) : 0.9;
+    ctx.beginPath(); ctx.moveTo(PL.reserve.x-camX, ground+30);
+    ctx.quadraticCurveTo(PL.reserve.x-camX+50, ground-90, PL.reserve.x-camX+130, ground-160);
+    ctx.stroke();
+    ctx.fillStyle = col(...P.sign);
+    ctx.fillRect(PL.reserve.x-camX-6, ground-6, 5, 36);
+    ctx.fillRect(PL.reserve.x-camX-22, ground-14, 38, 12);
+    ctx.globalAlpha = 1;
+  }
+  // buildings
+  building(PL.dairy.x-camX, ground, 130, 74, P.bld1, "DAIRY", t);
+  building(PL.pub.x-camX,   ground, 170, 88, P.bld2, "TAVERN", t);
+  building(PL.mara.x-camX,  ground, 110, 66, P.bld3, "", t);
+  // flame tree + tui by dairy
+  tree(PL.dairy.x-260-camX, ground+30, t, o);
+  // bench
+  const bx = PL.bench.x-camX;
+  ctx.fillStyle = col(...P.trunk);
+  ctx.fillRect(bx-26, ground-2, 52, 5); ctx.fillRect(bx-26, ground-16, 52, 5);
+  ctx.fillRect(bx-22, ground-16, 4, 20); ctx.fillRect(bx+18, ground-16, 4, 20);
+  // Mara's bin (clickable — the whole thread in one prop)
+  const binX = PL.mara.x + 78 - camX;
+  ctx.save(); ctx.translate(binX, ground+24);
+  const wob = Math.max(0, 0.5-(t-(S.binWob||-10)));
+  ctx.rotate(wob * Math.sin((t-(S.binWob||0))*28) * 0.25);
+  ctx.fillStyle = col("#6e6e6a","#8a9296");
+  ctx.fillRect(-9, -26, 18, 26); ctx.fillRect(-11, -30, 22, 5);
+  ctx.restore();
+  // spirals — always there; whether you can see them is another matter
+  for (const sp of S.spirals) {
+    const a = sp.found ? 0.9 : (o > 0.3 ? 0.12 + 0.3*o : 0);
+    if (a > 0) drawSpiral(sp.x-camX, ground+sp.dy, sp.r, a, sp.found);
+  }
+  // NPCs: collected for hit-testing; count & liveliness scale with open
+  S.npcs = [];
+  npc(PL.dairy.x+90-camX, ground+26, P.np, o, t, 0);
+  if (o > 0.3) npc(PL.pub.x-70-camX + Math.sin(t*0.35)*40*o, ground+26, P.np2, o, t, 1);
+  if (o > 0.55) npc(900-camX + ((t*30)%700), ground+26, P.np, o, t, 2);   // kid with board
+  if (o > 0.55) npc(980-camX + ((t*30)%700), ground+26, P.np2, o, t, 3);
+  // gulls: living objects — they can be startled
+  for (const b of S.birds) { b.sx = b.x; b.sy = b.y; bird(b.x, b.y); }
+  // the tūī in flight
+  if (S.tui.state === "fly") {
+    const ft = S.tui.ft, fx = TREE_X-camX+14 + ft*150, fy = (ground-96) - 70*Math.sin(Math.min(ft/2, 1)*Math.PI*0.6) - ft*26;
+    ctx.fillStyle = "#1a2320";
+    ctx.beginPath(); ctx.ellipse(fx, fy, 7, 4.5, Math.sin(ft*14)*0.25, 0, 7); ctx.fill();
+  }
+  // falling flame-tree petals
+  ctx.fillStyle = col(...P.flame);
+  for (const pt of S.petals) {
+    ctx.globalAlpha = Math.min(1, pt.life);
+    ctx.fillRect(pt.x-camX, pt.y, 4, 3);
+  }
+  ctx.globalAlpha = 1;
+  // sea ripples
+  for (const rp of S.ripples) {
+    ctx.strokeStyle = col(...P.foam); ctx.globalAlpha = rp.life*0.6; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.ellipse(rp.x-camX, rp.y, rp.r, rp.r*0.35, 0, 0, 7); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // the child — at the edge of things, when you're open enough
+  if (S.child.on) {
+    const cxp = S.child.x - camX, a = Math.min(1, S.child.life) * 0.75;
+    ctx.globalAlpha = a; ctx.fillStyle = "#242830";
+    ctx.fillRect(cxp-4, ground-2, 8, 18);
+    ctx.beginPath(); ctx.arc(cxp, ground-8, 5, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // player
+  if (S.mode === "surf") drawSurf(t, horizon, ground, camX);
+  else drawPlayer(S.x-camX, ground+26, t);
+  // prompts
+  promptTick(camX, ground);
+  // vignette = guard, the one honest tell
+  const vg = ctx.createRadialGradient(W/2,H/2,H*0.3, W/2,H/2,H*0.85);
+  vg.addColorStop(0,"rgba(0,0,0,0)");
+  vg.addColorStop(1,`rgba(10,10,12,${0.15 + S.guard*0.55})`);
+  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+}
+function building(x, ground, w, h, pal, label, t) {
+  ctx.fillStyle = col(...pal); ctx.fillRect(x-w/2, ground-h, w, h+28);
+  ctx.fillStyle = col(...P.roof);
+  ctx.beginPath(); ctx.moveTo(x-w/2-10, ground-h); ctx.lineTo(x, ground-h-26); ctx.lineTo(x+w/2+10, ground-h); ctx.fill();
+  ctx.fillStyle = "rgba(20,20,25,.55)"; ctx.fillRect(x-12, ground-34, 24, 62); // door
+  if (label) {
+    ctx.fillStyle = col(...P.sign); ctx.fillRect(x-w/4-4, ground-h+8, w/2+8, 16);
+    ctx.fillStyle = "rgba(40,35,25,.8)"; ctx.font = "11px Georgia";
+    ctx.textAlign = "center"; ctx.fillText(label, x, ground-h+20);
+  }
+}
+function bird(x, y) {
+  ctx.strokeStyle = "rgba(30,35,40,.75)"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x-6, y); ctx.quadraticCurveTo(x-3, y-5, x, y);
+  ctx.quadraticCurveTo(x+3, y-5, x+6, y);
+  ctx.stroke();
+}
+function tree(x, y, t, o) {
+  ctx.fillStyle = col(...P.trunk); ctx.fillRect(x-5, y-70, 10, 70);
+  ctx.fillStyle = col(...P.flame);
+  for (let i=0;i<5;i++) {
+    ctx.beginPath();
+    ctx.ellipse(x + Math.sin(i*2.2)*30, y-85-((i*23)%40), 34, 22, 0, 0, 7); ctx.fill();
+  }
+  if (o > 0.35 && S.tui.state === "tree") { // the tūī, hopping when the world is open
+    const hop = Math.abs(Math.sin(t*3))* (o>0.6?8:3);
+    ctx.fillStyle = "#1a2320";
+    ctx.beginPath(); ctx.ellipse(x+14, y-96-hop, 7, 5, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "#e8e5da";
+    ctx.beginPath(); ctx.arc(x+11, y-97-hop, 2, 0, 7); ctx.fill(); // the white tuft
+  }
+}
+function drawSpiral(x, y, r, alpha, found) {
+  ctx.strokeStyle = found ? `rgba(196,150,40,${alpha})` : `rgba(60,52,36,${alpha})`;
+  ctx.lineWidth = found ? 2 : 1.4;
+  ctx.beginPath();
+  for (let a = 0; a < Math.PI*5; a += 0.25) {
+    const rr = r * a / (Math.PI*5);
+    const px = x + Math.cos(a)*rr, py = y + Math.sin(a)*rr;
+    a === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+}
+function npc(x, y, pal, o, t, i) {
+  if (x < -40 || x > W+40) return;
+  S.npcs.push({ id: i, x, y });
+  const walkA = o > 0.3 ? Math.sin(t*4+i*2)*4*o : 0;
+  ctx.fillStyle = col(...pal);
+  ctx.fillRect(x-6, y-40, 12, 26);                     // body
+  ctx.beginPath(); ctx.arc(x, y-47, 6, 0, 7); ctx.fill(); // head
+  ctx.strokeStyle = col(...pal); ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(x-3, y-15); ctx.lineTo(x-3-walkA, y);
+  ctx.moveTo(x+3, y-15); ctx.lineTo(x+3+walkA, y); ctx.stroke();
+  const react = t - (S.npcReact[i] ?? -10);
+  if (react < 1.6) { // a raised hand — you reached out, and it landed
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x+5, y-32);
+    ctx.lineTo(x+13, y-44 - Math.sin(react*9)*3); ctx.stroke();
+  }
+  if (i>=2) { ctx.fillStyle = col("#7a776e","#f2f2ea"); ctx.fillRect(x+8, y-38, 5, 30); } // surfboard
+}
+function drawPlayer(x, y, t) {
+  const moving = Math.abs(S.vx) > 5, wA = moving ? Math.sin(t*9)*6 : 0;
+  const bob = S.mode==="sit" ? 8 : 0;
+  ctx.fillStyle = "#20232a";
+  ctx.fillRect(x-7, y-44+bob, 14, 28);
+  ctx.beginPath(); ctx.arc(x, y-52+bob, 7, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#20232a"; ctx.lineWidth = 5;
+  if (S.mode==="sit") {
+    ctx.beginPath(); ctx.moveTo(x-4,y-16+bob); ctx.lineTo(x-12,y-4); ctx.moveTo(x+4,y-16+bob); ctx.lineTo(x+12,y-4); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.moveTo(x-3,y-16); ctx.lineTo(x-3-wA,y); ctx.moveTo(x+3,y-16); ctx.lineTo(x+3+wA,y); ctx.stroke();
+  }
+}
+function drawSurf(t, horizon, ground, camX) {
+  // waiting outside the break: the lineup view
+  const s = S.surf, seaY = horizon + (ground-horizon)*0.62;
+  const sx = PL.surfZone.x - camX;
+  const wx = sx + s.waveX; // incoming wave bump
+  const inWindow = s.waveX > -40 && s.waveX < 60;
+  const swell = inWindow ? 44 : 26;   // it stands up when it's yours
+  ctx.fillStyle = col(...P.seaFar); ctx.globalAlpha = 0.85;
+  ctx.beginPath();
+  ctx.moveTo(wx-110, seaY+8);
+  ctx.quadraticCurveTo(wx, seaY-swell-(open()*10), wx+110, seaY+8); ctx.fill();
+  ctx.globalAlpha = 1;
+  if (inWindow) { // crest feathers white: the NOW cue
+    ctx.fillStyle = col(...P.foam);
+    ctx.beginPath();
+    ctx.moveTo(wx-34, seaY-swell+8);
+    ctx.quadraticCurveTo(wx, seaY-swell-6, wx+34, seaY-swell+8);
+    ctx.quadraticCurveTo(wx, seaY-swell+16, wx-34, seaY-swell+8); ctx.fill();
+    // and the water pulls at your feet
+    ctx.globalAlpha = 0.5;
+    for (let i = 0; i < 5; i++)
+      ctx.fillRect(sx-20+i*10, seaY + 4 + Math.sin(t*8+i)*2, 6, 2);
+    ctx.globalAlpha = 1;
+  }
+  ctx.save(); ctx.translate(sx, seaY-4);
+  ctx.fillStyle = col("#7a776e","#f2f2ea"); ctx.fillRect(-16, 2, 32, 5); // board
+  ctx.fillStyle = "#20232a";
+  ctx.fillRect(-6, -26, 12, 24);
+  ctx.beginPath(); ctx.arc(0, -32, 6, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function drawRide(t) {
+  const o = open(), s = S.surf;
+  const seaTop = H*0.30, baseY = H*0.88;
+  const CX = W*0.22;                                    // where the curl lives
+  // sky
+  const sky = ctx.createLinearGradient(0,0,0,seaTop*1.4);
+  sky.addColorStop(0, col(...P.skyTop)); sky.addColorStop(1, col(...P.skyBot));
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,seaTop+2);
+  // far shore parallax, drifting with speed — motion without a meter
+  const drift = (s.dist*90) % (W+400);
+  ctx.fillStyle = col(...P.hill); ctx.globalAlpha = 0.6;
+  ctx.beginPath(); ctx.moveTo(W-drift-200, seaTop);
+  ctx.quadraticCurveTo(W-drift, seaTop-46, W-drift+200, seaTop); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(W-drift+500, seaTop);
+  ctx.quadraticCurveTo(W-drift+650, seaTop-30, W-drift+800, seaTop); ctx.fill();
+  ctx.globalAlpha = 1;
+  // open sea behind the wave
+  const sea = ctx.createLinearGradient(0,seaTop,0,H);
+  sea.addColorStop(0, col(...P.seaFar)); sea.addColorStop(1, col(...P.seaNear));
+  ctx.fillStyle = sea; ctx.fillRect(0,seaTop,W,H-seaTop);
+  // the face: tall at the curl, tapering to the shoulder
+  const faceH = x => Math.max(0, (baseY-seaTop-30) * (1 - (x-CX)/(W*1.15)));
+  const topY  = x => baseY - faceH(x) + Math.sin(x*0.02 + t*2.5)*4;
+  const face = ctx.createLinearGradient(0,seaTop,0,baseY);
+  face.addColorStop(0, col(...P.seaFar)); face.addColorStop(1, col(...P.seaNear));
+  ctx.fillStyle = face;
+  ctx.beginPath(); ctx.moveTo(CX-140, H);
+  ctx.lineTo(CX-140, baseY-10);
+  for (let x = CX-140; x <= W; x += 18) ctx.lineTo(x, topY(Math.max(x,CX)));
+  ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+  // contour bands parallel to the lip — the face reads as a slope
+  ctx.strokeStyle = "rgba(15,40,50,0.5)";
+  for (let b = 1; b <= 3; b++) {
+    ctx.lineWidth = 2; ctx.globalAlpha = 0.16 + 0.06*b;
+    ctx.beginPath();
+    for (let x = CX; x <= W; x += 18) ctx.lineTo(x, topY(x) + faceH(x)*(b/4));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // the pocket: the lit zone just ahead of the curl — where the power is
+  const pk = ctx.createLinearGradient(CX-10, 0, CX + W*0.16, 0);
+  pk.addColorStop(0, `rgba(255,248,220,${0.16 + 0.12*o})`);
+  pk.addColorStop(1, "rgba(255,248,220,0)");
+  ctx.fillStyle = pk;
+  ctx.beginPath(); ctx.moveTo(CX-10, H); ctx.lineTo(CX-10, topY(CX));
+  for (let x = CX; x <= CX + W*0.16; x += 12) ctx.lineTo(x, topY(x));
+  ctx.lineTo(CX + W*0.16, H); ctx.closePath(); ctx.fill();
+  // foam edge along the lip + spray blowing off it
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 4; ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  for (let x = CX; x <= W; x += 18) ctx.lineTo(x, topY(x));
+  ctx.stroke(); ctx.globalAlpha = 1;
+  ctx.fillStyle = col(...P.foam);
+  for (let i = 0; i < 12; i++) {
+    const lx = CX + ((i*131 + t*260) % (W*0.7));
+    const ph2 = ((t*2 + i) % 1);
+    ctx.globalAlpha = 0.45 * (1-ph2);
+    ctx.fillRect(lx - ph2*30, topY(lx) - 4 - ph2*18, 3, 2);
+  }
+  ctx.globalAlpha = 1;
+  // streaks running down the face — the water moving under you
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 1.5;
+  for (let k = 0; k < 14; k++) {
+    const ph = ((t*0.55*s.spd + k/14) % 1);
+    const x = CX + ph * (W-CX), fh = faceH(x);
+    if (fh < 20) continue;
+    const yb = topY(x) + fh * (0.25 + (k*37 % 50)/100);
+    ctx.globalAlpha = 0.12 + 0.18*o;
+    ctx.beginPath(); ctx.moveTo(x, yb);
+    ctx.lineTo(x-20, yb+9); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // sun glitter on the face, only when open
+  if (o > 0.5) {
+    ctx.fillStyle = col(...P.glare);
+    for (let i = 0; i < 14; i++) {
+      const gx = CX + ((i*173 + t*140) % (W-CX)), gy = topY(gx) + faceH(gx)*(0.2+((i*89)%60)/100);
+      ctx.globalAlpha = (o-0.5) * Math.abs(Math.sin(t*3+i)) * 0.7;
+      ctx.fillRect(gx, gy, 3, 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // whitewater left of the curl
+  ctx.fillStyle = col(...P.foam);
+  ctx.globalAlpha = 0.92;
+  ctx.beginPath(); ctx.moveTo(CX-140, H); ctx.lineTo(CX-140, baseY-14);
+  for (let x = CX-140; x <= CX+8; x += 12)
+    ctx.lineTo(x, baseY-14 - Math.abs(Math.sin(x*0.08+t*6))*26 - (x-CX+140)*0.35);
+  ctx.lineTo(CX+8, H); ctx.closePath(); ctx.fill();
+  // the curl itself: tumbling arcs pouring off the lip
+  for (let i = 0; i < 6; i++) {
+    const a = t*4 + i*1.1;
+    ctx.globalAlpha = 0.5 + 0.3*Math.sin(a);
+    ctx.beginPath();
+    ctx.arc(CX - 6 + Math.sin(a)*10, topY(CX) + 18 + i*20, 12 + 4*Math.sin(a*1.3), 0, 7);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // player on the face
+  let px = CX + s.gap * (W*0.5);
+  let py = baseY - 8 - s.h * (faceH(px) - 14);
+  // the curl reaches for you when you're slow — menace you can see
+  if (s.phase === "ride" && s.gap < 0.25) {
+    const menace = 1 - s.gap/0.25;
+    ctx.fillStyle = col(...P.foam);
+    for (let i = 0; i < 5; i++) {
+      const fy = py - 14 + i*9, reach = menace * (34 + 18*Math.sin(t*7 + i*2));
+      ctx.globalAlpha = 0.55 * menace;
+      ctx.beginPath();
+      ctx.ellipse(CX + reach*0.6, fy, reach, 5, 0, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (s.gap < 0.14) { // it's got teeth now
+      const sh = (0.14 - s.gap) * 30;
+      px += (Math.random()-0.5) * sh; py += (Math.random()-0.5) * sh;
+    }
+  }
+  s.trail.push([px, py]); if (s.trail.length > 26) s.trail.shift();
+  ctx.strokeStyle = col(...P.foam); ctx.lineWidth = 1.5 + s.spd*2; // wake thickens with speed
+  ctx.globalAlpha = 0.35 + Math.min(0.4, (s.spd-1)*0.5);
+  ctx.beginPath();
+  s.trail.forEach(([tx, ty], i) => i ? ctx.lineTo(tx, ty+8) : ctx.moveTo(tx, ty+8));
+  ctx.stroke(); ctx.globalAlpha = 1;
+  // spray
+  ctx.fillStyle = col(...P.foam);
+  for (const p of s.spray) {
+    ctx.globalAlpha = Math.min(0.9, p.life*1.6);
+    const sz = p.big ? 4 : 3;
+    ctx.fillRect(px + p.x, py + p.y, sz, sz);
+  }
+  ctx.globalAlpha = 1;
+  if (s.phase === "tumble") {
+    ctx.save(); ctx.translate(px, py + (1.6-s.tumbleT)*40); ctx.rotate(s.tumbleT*9);
+    ctx.fillStyle = "#20232a";
+    ctx.fillRect(-6, -12, 12, 24);
+    ctx.beginPath(); ctx.arc(0, -18, 6, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = col(...P.foam);
+    for (let i = 0; i < 10; i++) {
+      ctx.globalAlpha = Math.random()*0.7;
+      ctx.fillRect(px-30+Math.random()*60, py-10+Math.random()*30, 4, 4);
+    }
+    ctx.globalAlpha = 1;
+  } else {
+    const slope = -0.5, lean = slope + (keys.arrowup||keys.w||keys.arrowright||keys.d ? -0.3 : 0)
+                              + (keys.arrowdown||keys.s||keys.arrowleft||keys.a ? 0.35 : 0);
+    ctx.save(); ctx.translate(px, py); ctx.rotate(lean*0.5);
+    ctx.fillStyle = col("#7a776e","#f2f2ea"); ctx.fillRect(-17, 4, 34, 5);
+    ctx.fillStyle = "#20232a";
+    const crouch = s.h < 0.35 ? 5 : 0;
+    ctx.fillRect(-6, -24+crouch, 12, 26-crouch);
+    ctx.beginPath(); ctx.arc(0, -30+crouch, 6, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+  // vignette
+  const vg = ctx.createRadialGradient(W/2,H/2,H*0.3, W/2,H/2,H*0.85);
+  vg.addColorStop(0,"rgba(0,0,0,0)");
+  vg.addColorStop(1,`rgba(10,10,12,${0.15 + S.guard*0.55})`);
+  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+  hintEl.textContent = s.phase === "ride" ? "carve ↑ ↓ · snap E off the top" : "";
+}
+const hintEl = document.getElementById("hint");
+function promptTick(camX, ground) {
+  let h = "";
+  if (S.mode === "walk") {
+    for (const key in PL) {
+      const p = PL[key];
+      if (key === "reserve" && (!trackOpen() || S.carvingDone)) continue;
+      if (near(p)) { h = `[E] ${p.label}`; break; }
+    }
+  } else if (S.mode === "surf") {
+    h = S.surf.phase === "ride" ? "carve ↑ ↓ · snap E off the top"
+      : S.surf.phase === "wait" ? (S.surf.waveX > -40 && S.surf.waveX < 60 ? "NOW — E"
+        : S.surf.waveX < -120 ? "wait for it… (E paddles in)" : "wait for it…")
+      : "";
+  }
+  hintEl.textContent = h;
+}
+
+// ── update ───────────────────────────────────────────────────────────
+let last = 0;
+function frame(ms) {
+  const t = ms/1000, dt = Math.min(t-last, 0.05); last = t;
+  S.t += dt;
+  if (S.mode === "walk" || S.mode === "end") {
+    const L = keys.arrowleft || keys.a, R = keys.arrowright || keys.d;
+    S.vx = (R?220:0) - (L?220:0);
+    S.x = Math.max(80, Math.min(WORLD_W-80, S.x + S.vx*dt));
+    if ((keys.e) && !eLatch) { eLatch = true; tryAct(); }
+    if (!keys.e) eLatch = false;
+  } else if (S.mode === "sit") {
+    S.sitT -= dt;
+    if (S.sitT <= 0) { soften(0.05); S.mode = "walk"; S.benchUsed++; }
+  } else if (S.mode === "surf") {
+    if (keys.e && !eLatch) { eLatch = true; }
+    surfTick(dt);
+    if (!keys.e) eLatch = false;
+  }
+  maybePhone();
+  tickWorld(dt);
+  audioTick(dt);
+  capTick(dt);
+  draw(S.t);
+  requestAnimationFrame(frame);
+}
+
+function tickWorld(dt) {
+  const horizon = H*0.42;
+  // gull population tracks openness
+  const want = Math.floor(open()*9);
+  while (S.birds.length < want)
+    S.birds.push({ x: Math.random()*W, y: 40+Math.random()*(horizon-100),
+                   vx: (14+Math.random()*22)*(Math.random()<0.5?-1:1),
+                   vy: 0, ph: Math.random()*7, scare: 0, baseY: 0, sx:0, sy:0 });
+  if (S.birds.length > want) S.birds.length = want;
+  for (const b of S.birds) {
+    b.x += b.vx*dt * (b.scare > 0 ? 2.2 : 1);
+    if (b.scare > 0) { b.scare -= dt; b.y += b.vy*dt; b.vy *= 0.97; }
+    else b.y += Math.sin(S.t*2 + b.ph)*6*dt;
+    if (b.y < 24) b.y = 24;
+    if (b.x < -90) b.x = W+80; if (b.x > W+90) b.x = -80;
+  }
+  // tūī flight cycle
+  if (S.tui.state === "fly") {
+    S.tui.ft += dt;
+    if (S.tui.ft > 2.4) { S.tui.state = "away"; S.tui.at = 9 + Math.random()*9; }
+  } else if (S.tui.state === "away") {
+    S.tui.at -= dt;
+    if (S.tui.at <= 0) { S.tui.state = "tree"; if (open() > 0.35) sTui(); }
+  }
+  // the child at the edge of things
+  const ch = S.child;
+  if (!ch.on && open() > 0.65 && S.mode === "walk" && S.t > ch.nextAt) {
+    ch.on = true; ch.life = 4.5; ch.seen++;
+    ch.x = (S.x - S.camX > W/2) ? S.camX + 50 : S.camX + W - 50;
+  }
+  if (ch.on) {
+    ch.life -= dt;
+    if (Math.abs(S.x - ch.x) < 130) { ch.on = false; ch.nextAt = S.t + 26 + Math.random()*16; sThump(); }
+    else if (ch.life <= 0) { ch.on = false; ch.nextAt = S.t + 24 + Math.random()*20; }
+  }
+  // particles
+  for (const p of S.petals) { p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 8*dt; p.life -= dt; }
+  S.petals = S.petals.filter(p => p.life > 0);
+  for (const r of S.ripples) { r.r += 26*dt; r.life -= dt; }
+  S.ripples = S.ripples.filter(r => r.life > 0);
+}
+
+// ── start ────────────────────────────────────────────────────────────
+document.getElementById("start").addEventListener("click", () => {
+  document.getElementById("start").style.display = "none";
+  if (isTouch) for (const id of ["tL","tR","tE"]) document.getElementById(id).style.display = "flex";
+  try { audioInit(); } catch (e) {}
+  cap("An ordinary morning.", 3);
+  cap("Everything can be touched.", 3.5);
+  requestAnimationFrame(ms => { last = ms/1000; requestAnimationFrame(frame); });
+});
+
+// test hook (not part of the game)
+window.__bay = { get guard(){return S.guard;}, set guard(v){S.guard=v;}, state: S };
+</script>
+</body>
+</html>
